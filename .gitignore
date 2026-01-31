@@ -1,12 +1,13 @@
+# Environment variables
+.env
+.env.local
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
-venv/
-ENV/
 build/
 develop-eggs/
 dist/
@@ -23,10 +24,10 @@ wheels/
 .installed.cfg
 *.egg
 
-# Environment
-.env
-.env.local
-.env.*.local
+# Virtual environments
+venv/
+ENV/
+env/
 
 # IDE
 .vscode/
@@ -35,30 +36,27 @@ wheels/
 *.swo
 *~
 
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# Logs
-*.log
-logs/
-
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
 
-# Celery
-celerybeat-schedule
-celerybeat.pid
+# Database
+*.db
+*.sqlite3
 
-# Redis
-dump.rdb
+# Logs
+*.log
 
-# macOS
+# OS
 .DS_Store
+Thumbs.db
+
+# OMC (keep only config)
+.omc/state/
+.omc/logs/
+.omc/notepads/
 
 # Docker
-docker-compose.override.yml
+.dockerignore

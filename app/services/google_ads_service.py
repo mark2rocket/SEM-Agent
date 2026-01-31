@@ -1,0 +1,194 @@
+"""Google Ads API service."""
+
+from google.ads.googleads.client import GoogleAdsClient
+from datetime import date
+from typing import List, Dict
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class GoogleAdsService:
+    """Service for Google Ads API integration."""
+
+    def __init__(
+        self,
+        developer_token: str,
+        client_id: str,
+        client_secret: str,
+        refresh_token: str,
+        login_customer_id: str = None
+    ):
+        self.client = GoogleAdsClient.load_from_dict({
+            "developer_token": developer_token,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "login_customer_id": login_customer_id,
+            "use_proto_plus": True
+        })
+
+    def get_performance_metrics(
+        self,
+        customer_id: str,
+        date_from: date,
+        date_to: date
+    ) -> Dict:
+        """Fetch performance metrics for date range."""
+        logger.info(f"Fetching metrics for {customer_id} from {date_from} to {date_to}")
+
+        try:
+            ga_service = self.client.get_service("GoogleAdsService")
+
+            # GAQL query for campaign metrics
+            query = f"""
+                SELECT
+                    metrics.cost_micros,
+                    metrics.conversions,
+                    metrics.conversions_value,
+                    metrics.clicks,
+                    metrics.impressions
+                FROM campaign
+                WHERE segments.date BETWEEN '{date_from.strftime('%Y-%m-%d')}'
+                    AND '{date_to.strftime('%Y-%m-%d')}'
+            """
+
+            # Execute search request
+            response = ga_service.search(customer_id=customer_id, query=query)
+
+            # Aggregate metrics
+            total_cost_micros = 0
+            total_conversions = 0.0
+            total_conversion_value = 0.0
+            total_clicks = 0
+            total_impressions = 0
+
+            for row in response:
+                total_cost_micros += row.metrics.cost_micros
+                total_conversions += row.metrics.conversions
+                total_conversion_value += row.metrics.conversions_value
+                total_clicks += row.metrics.clicks
+                total_impressions += row.metrics.impressions
+
+            # Convert micros to actual currency
+            cost = total_cost_micros / 1_000_000
+
+            # Calculate ROAS (avoid division by zero)
+            roas = (total_conversion_value / cost * 100) if cost > 0 else 0.0
+
+            return {
+                "cost": cost,
+                "conversions": total_conversions,
+                "conversion_value": total_conversion_value,
+                "clicks": total_clicks,
+                "impressions": total_impressions,
+                "roas": roas
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to fetch performance metrics: {e}")
+            raise
+
+    def get_search_terms(
+        self,
+        customer_id: str,
+        date_from: date,
+        date_to: date,
+        min_cost: float = 0
+    ) -> List[Dict]:
+        """Get search terms with performance data."""
+        logger.info(f"Fetching search terms for {customer_id} from {date_from} to {date_to}")
+
+        try:
+            ga_service = self.client.get_service("GoogleAdsService")
+
+            # GAQL query for search term report
+            query = f"""
+                SELECT
+                    search_term_view.search_term,
+                    campaign.id,
+                    campaign.name,
+                    metrics.cost_micros,
+                    metrics.clicks,
+                    metrics.conversions
+                FROM search_term_view
+                WHERE segments.date BETWEEN '{date_from.strftime('%Y-%m-%d')}'
+                    AND '{date_to.strftime('%Y-%m-%d')}'
+                    AND metrics.cost_micros >= {int(min_cost * 1_000_000)}
+            """
+
+            # Execute search request
+            response = ga_service.search(customer_id=customer_id, query=query)
+
+            # Build result list
+            search_terms = []
+            for row in response:
+                search_terms.append({
+                    "search_term": row.search_term_view.search_term,
+                    "campaign_id": str(row.campaign.id),
+                    "campaign_name": row.campaign.name,
+                    "cost": row.metrics.cost_micros / 1_000_000,
+                    "clicks": row.metrics.clicks,
+                    "conversions": row.metrics.conversions
+                })
+
+            logger.info(f"Found {len(search_terms)} search terms")
+            return search_terms
+
+        except Exception as e:
+            logger.error(f"Failed to fetch search terms: {e}")
+            raise
+
+    def add_negative_keyword(
+        self,
+        customer_id: str,
+        campaign_id: str,
+        keyword_text: str,
+        match_type: str = "EXACT"
+    ) -> bool:
+        """Add negative keyword to campaign."""
+        logger.info(f"Adding negative keyword: {keyword_text} to campaign {campaign_id}")
+
+        try:
+            # Get the CampaignCriterionService
+            campaign_criterion_service = self.client.get_service("CampaignCriterionService")
+
+            # Create campaign criterion operation
+            campaign_criterion_operation = self.client.get_type("CampaignCriterionOperation")
+            campaign_criterion = campaign_criterion_operation.create
+
+            # Set campaign resource name
+            campaign_criterion.campaign = self.client.get_service("CampaignService").campaign_path(
+                customer_id, campaign_id
+            )
+
+            # Mark as negative criterion
+            campaign_criterion.negative = True
+
+            # Set keyword criterion
+            campaign_criterion.keyword.text = keyword_text
+
+            # Map match type string to enum
+            keyword_match_type_enum = self.client.enums.KeywordMatchTypeEnum
+            if match_type.upper() == "EXACT":
+                campaign_criterion.keyword.match_type = keyword_match_type_enum.EXACT
+            elif match_type.upper() == "PHRASE":
+                campaign_criterion.keyword.match_type = keyword_match_type_enum.PHRASE
+            elif match_type.upper() == "BROAD":
+                campaign_criterion.keyword.match_type = keyword_match_type_enum.BROAD
+            else:
+                logger.warning(f"Unknown match type '{match_type}', defaulting to EXACT")
+                campaign_criterion.keyword.match_type = keyword_match_type_enum.EXACT
+
+            # Execute the mutate request
+            response = campaign_criterion_service.mutate_campaign_criteria(
+                customer_id=customer_id,
+                operations=[campaign_criterion_operation]
+            )
+
+            logger.info(f"Successfully added negative keyword. Resource name: {response.results[0].resource_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add negative keyword '{keyword_text}': {e}")
+            return False

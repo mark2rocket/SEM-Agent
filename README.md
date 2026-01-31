@@ -31,6 +31,9 @@ SEM-Agent is a Slack bot that integrates with Google Ads to provide:
 
 - **[PRD](docs/PRD.md)** - Product Requirements Document (v1.1.0)
 - **[Implementation Plan](docs/IMPLEMENTATION_PLAN.md)** - 60-day development plan
+- **[Migration Quick Start](MIGRATION_QUICKSTART.md)** - Database setup guide
+- **[Database Migration Guide](docs/DATABASE_MIGRATION.md)** - Detailed migration documentation
+- **[Deployment Guide](docs/DEPLOYMENT.md)** - Production deployment instructions
 
 ## Quick Start
 
