@@ -31,11 +31,20 @@ app = FastAPI(
 register_exception_handlers(app)
 
 # Initialize Redis client for rate limiting (synchronous initialization for middleware)
-redis_client = Redis.from_url(
-    settings.redis_url,
-    encoding="utf-8",
-    decode_responses=True
-)
+try:
+    redis_client = Redis.from_url(
+        settings.redis_url,
+        encoding="utf-8",
+        decode_responses=True,
+        socket_connect_timeout=5,  # 5 second connection timeout
+        socket_timeout=5,  # 5 second operation timeout
+        retry_on_timeout=True,
+        health_check_interval=30
+    )
+    logger.info("Redis client created successfully")
+except Exception as e:
+    logger.error(f"Failed to create Redis client: {e}")
+    raise
 
 # Add middleware (order matters: logging → tenant → rate limit → CORS)
 app.add_middleware(RequestLoggingMiddleware)
@@ -55,19 +64,33 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     """Initialize application on startup."""
-    logger.info("Starting SEM-Agent API...")
-    logger.info("Redis client initialized and ready for rate limiting")
+    try:
+        logger.info("Starting SEM-Agent API...")
+        logger.info(f"Environment: {settings.environment}")
 
-    # Initialize token encryption
-    init_token_encryption(settings.token_encryption_key)
-    logger.info("Token encryption initialized")
+        # Test Redis connection
+        try:
+            await redis_client.ping()
+            logger.info("Redis connection verified - ready for rate limiting")
+        except Exception as e:
+            logger.error(f"Redis connection test failed: {e}")
+            logger.warning("Continuing without Redis rate limiting")
 
-    # Create database tables (in production, use Alembic migrations)
-    if settings.is_development:
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables created")
+        # Initialize token encryption
+        logger.info("Initializing token encryption...")
+        init_token_encryption(settings.token_encryption_key)
+        logger.info("Token encryption initialized successfully")
 
-    logger.info("SEM-Agent API started successfully")
+        # Create database tables (in production, use Alembic migrations)
+        if settings.is_development:
+            logger.info("Development mode - creating database tables...")
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database tables created successfully")
+
+        logger.info("✅ SEM-Agent API started successfully")
+    except Exception as e:
+        logger.error(f"❌ Startup failed: {e}", exc_info=True)
+        raise
 
 
 @app.on_event("shutdown")
