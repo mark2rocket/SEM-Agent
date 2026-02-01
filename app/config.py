@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = Field(...)
 
+    # Celery (defaults to Redis URL if not set)
+    celery_broker_url: Optional[str] = Field(default=None)
+    celery_result_backend: Optional[str] = Field(default=None)
+
     # Slack
     slack_client_id: str = Field(...)
     slack_client_secret: str = Field(...)
@@ -53,9 +57,7 @@ class Settings(BaseSettings):
     algorithm: str = Field(default="HS256")
     access_token_expire_minutes: int = Field(default=30)
 
-    # Celery
-    celery_broker_url: str = Field(...)
-    celery_result_backend: str = Field(...)
+    # Celery timezone
     celery_timezone: str = Field(default="Asia/Seoul")
 
     # Monitoring
@@ -77,6 +79,14 @@ class Settings(BaseSettings):
         if v_upper not in valid_levels:
             raise ValueError(f"Invalid log level: {v}")
         return v_upper
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Set Celery URLs to Redis URL if not explicitly provided
+        if not self.celery_broker_url:
+            self.celery_broker_url = self.redis_url
+        if not self.celery_result_backend:
+            self.celery_result_backend = self.redis_url
 
     @property
     def database_url_sync(self) -> str:
