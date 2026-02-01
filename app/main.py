@@ -129,6 +129,7 @@ from .api.endpoints import slack, oauth
 from .api.endpoints.health import router as health_router
 from .api.endpoints.reports import router as reports_router
 from .api.endpoints.keywords import router as keywords_router
+from .api.endpoints.debug import router as debug_router
 from .core.metrics import metrics_router
 
 app.include_router(health_router, tags=["health"])
@@ -136,4 +137,5 @@ app.include_router(slack.router, prefix="/slack", tags=["slack"])
 app.include_router(oauth.router, prefix="/oauth", tags=["oauth"])
 app.include_router(reports_router, prefix="/api/v1", tags=["reports"])
 app.include_router(keywords_router, prefix="/api/v1", tags=["keywords"])
+app.include_router(debug_router, prefix="/debug", tags=["debug"])
 app.include_router(metrics_router, tags=["monitoring"])
