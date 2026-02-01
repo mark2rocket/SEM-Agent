@@ -24,4 +24,4 @@ ENV FORCE_REBUILD=1
 EXPOSE 8000
 
 # Run migrations and start server
-CMD sh -c "echo 'Starting services...' && alembic upgrade head && echo 'Migrations complete' && exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --log-level info"
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --log-level info

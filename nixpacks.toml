@@ -8,4 +8,4 @@ cmds = ["pip install -r requirements.txt"]
 cmds = ["echo 'Build complete'"]
 
 [start]
-cmd = "sh -c 'echo Starting services... && alembic upgrade head && echo Migrations complete && exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --log-level info'"
+cmd = "exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --log-level info"

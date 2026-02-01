@@ -81,11 +81,11 @@ async def startup_event():
         init_token_encryption(settings.token_encryption_key)
         logger.info("Token encryption initialized successfully")
 
-        # Create database tables (in production, use Alembic migrations)
-        if settings.is_development:
-            logger.info("Development mode - creating database tables...")
-            Base.metadata.create_all(bind=engine)
-            logger.info("Database tables created successfully")
+        # Create database tables
+        # Temporarily using SQLAlchemy create_all instead of migrations
+        logger.info("Creating database tables if they don't exist...")
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables ready")
 
         logger.info("✅ SEM-Agent API started successfully")
     except Exception as e:
