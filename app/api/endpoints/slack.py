@@ -123,7 +123,7 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
 
         # Handle /sem-help command
         if command == "/sem-help":
-            google_auth_url = f"{settings.api_url or 'https://sem-agent.up.railway.app'}/oauth/google/authorize"
+            google_auth_url = "https://sem-agent.up.railway.app/oauth/google/authorize"
             return {
                 "response_type": "ephemeral",
                 "text": "🤖 *SEM-Agent 도움말*\n\n"
@@ -262,7 +262,7 @@ async def handle_report_command(db: Session, channel_id: str):
         google_ads_service = get_google_ads_service(tenant.id, db)
     except HTTPException:
         # Google Ads not connected
-        google_auth_url = f"{settings.api_url or 'https://sem-agent.up.railway.app'}/oauth/google/authorize"
+        google_auth_url = "https://sem-agent.up.railway.app/oauth/google/authorize"
         return {
             "response_type": "ephemeral",
             "text": f"❌ Google Ads 계정이 연동되지 않았습니다.\n\n"
