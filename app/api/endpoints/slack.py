@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Global set to keep strong references to background tasks
+_background_tasks = set()
+
 
 def get_google_ads_service(tenant_id: int, db: Session):
     """Get GoogleAdsService with credentials from OAuth tokens and settings.
@@ -591,13 +594,77 @@ async def handle_report_command(db: Session, channel_id: str):
         }
 
 
-async def _generate_report_async(report_service: "ReportService", tenant_id: int):
-    """Generate report asynchronously."""
+async def _generate_report_async(
+    tenant_id: int,
+    channel_id: str,
+    selected_campaign_ids: list[str] = None
+):
+    """Generate report asynchronously with proper error handling.
+
+    Args:
+        tenant_id: The tenant ID
+        channel_id: Slack channel ID to post results/errors to
+        selected_campaign_ids: List of campaign IDs to include in report (optional)
+    """
+    from ...api.deps import get_db
+    from ...models.tenant import Tenant
+    from ...services.report_service import ReportService
+    from ...services.gemini_service import GeminiService
+    from ...services.slack_service import SlackService
+
+    # Create new DB session for this background task
+    db = next(get_db())
+
     try:
+        # Fetch tenant
+        tenant = db.query(Tenant).filter_by(id=tenant_id).first()
+        if not tenant:
+            logger.error(f"Tenant {tenant_id} not found for async report generation")
+            return
+
+        # Initialize services with fresh instances
+        google_ads_service = get_google_ads_service(tenant_id, db)
+        gemini_service = GeminiService(api_key=settings.gemini_api_key)
+        slack_service = SlackService(bot_token=tenant.bot_token)
+
+        report_service = ReportService(
+            db=db,
+            google_ads_service=google_ads_service,
+            gemini_service=gemini_service,
+            slack_service=slack_service
+        )
+
+        # Generate report (this will post to Slack internally)
         result = report_service.generate_weekly_report(tenant_id)
-        logger.info(f"Report generated: {result}")
+        logger.info(f"Report generated successfully: {result}")
+
+    except HTTPException as e:
+        logger.error(f"HTTP error generating report: {e.detail}", exc_info=True)
+        # Post error message to Slack
+        try:
+            slack_service = SlackService(bot_token=tenant.bot_token)
+            slack_service.client.chat_postMessage(
+                channel=channel_id,
+                text=f"❌ 리포트 생성 중 오류가 발생했습니다: {e.detail}"
+            )
+        except Exception as slack_error:
+            logger.error(f"Failed to post error to Slack: {slack_error}")
+
     except Exception as e:
         logger.error(f"Error generating report: {str(e)}", exc_info=True)
+        # Post error message to Slack
+        try:
+            tenant = db.query(Tenant).filter_by(id=tenant_id).first()
+            if tenant and tenant.bot_token:
+                slack_service = SlackService(bot_token=tenant.bot_token)
+                slack_service.client.chat_postMessage(
+                    channel=channel_id,
+                    text=f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}"
+                )
+        except Exception as slack_error:
+            logger.error(f"Failed to post error to Slack: {slack_error}")
+    finally:
+        db.close()
 
 
 @router.post("/interactions")
@@ -618,6 +685,7 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     payload = json.loads(form_data.get("payload"))
 
     user_id = payload["user"]["id"]
+    channel_id = payload.get("channel", {}).get("id", "")
     actions = payload.get("actions", [])
 
     if not actions:
@@ -706,17 +774,18 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
 
         # Trigger immediate report generation
         try:
-            gemini_service = GeminiService(api_key=settings.gemini_api_key)
-            report_service = ReportService(
-                db=db,
-                google_ads_service=google_ads_service,
-                gemini_service=gemini_service,
-                slack_service=slack_service
-            )
-
             # Generate report asynchronously
             import asyncio
-            asyncio.create_task(_generate_report_async(report_service, tenant.id))
+            task = asyncio.create_task(
+                _generate_report_async(
+                    tenant_id=tenant.id,
+                    channel_id=channel_id,
+                    selected_campaign_ids=selected_campaign_ids
+                )
+            )
+            # Keep reference to prevent garbage collection
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
             return {
                 "text": f"📊 리포트를 생성 중입니다...\n선택된 캠페인: {len(selected_campaign_ids)}개" if selected_campaign_ids else "📊 리포트를 생성 중입니다... (모든 캠페인 포함)",
