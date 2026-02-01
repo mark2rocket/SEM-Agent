@@ -14,6 +14,7 @@ from app.services.keyword_service import KeywordService
 from app.services.google_ads_service import GoogleAdsService
 from app.services.gemini_service import GeminiService
 from app.models.report import ReportSchedule, ReportFrequency
+from app.models.google_ads import GoogleAdsAccount
 
 logger = logging.getLogger(__name__)
 
@@ -191,21 +192,27 @@ class ActionRouter:
     ) -> str:
         """Handle data question by querying Google Ads."""
         try:
+            # Get customer_id from tenant_id
+            account = self.db.query(GoogleAdsAccount).filter_by(
+                tenant_id=tenant_id, is_active=True
+            ).first()
+            if not account:
+                logger.error(f"No active Google Ads account for tenant {tenant_id}")
+                return "Sorry, I couldn't find an active Google Ads account for your organization. Please set up your Google Ads account first."
+
             # Parse date range
             start_date, end_date = self._parse_date_range(entities)
 
             # Extract metrics of interest
             metrics = entities.get('metrics', ['clicks', 'impressions', 'cost', 'conversions'])
-            campaign_name = entities.get('campaign_name')
 
-            logger.info(f"Answering question for tenant {tenant_id}: metrics={metrics}, campaign={campaign_name}")
+            logger.info(f"Answering question for tenant {tenant_id}: metrics={metrics}")
 
             # Query Google Ads data
             data = await self.google_ads_service.get_campaign_metrics(
-                tenant_id=tenant_id,
-                start_date=start_date,
-                end_date=end_date,
-                campaign_name=campaign_name,
+                customer_id=account.customer_id,
+                date_from=start_date,
+                date_to=end_date,
                 metrics=metrics
             )
 
@@ -214,7 +221,6 @@ class ActionRouter:
 
 Data: {data}
 Date Range: {start_date} to {end_date}
-Campaign: {campaign_name or 'All campaigns'}
 Conversation History: {conversation_history or 'None'}
 
 Format the response in a friendly, conversational way with key metrics highlighted."""
