@@ -1,7 +1,7 @@
 """OAuth endpoints for Google and Slack."""
 
 from fastapi import APIRouter, HTTPException, Request, Depends, Query
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, HTMLResponse
 from sqlalchemy.orm import Session
 from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request as GoogleRequest
@@ -272,16 +272,162 @@ async def google_oauth_callback(
             # Don't fail the OAuth flow if Slack message fails
             logger.error(f"Failed to send Slack welcome message: {e}", exc_info=True)
 
-        return JSONResponse(
-            status_code=200,
-            content={
-                "status": "success",
-                "message": "Google Ads authorization successful",
-                "tenant_id": tenant_id,
-                "has_refresh_token": encrypted_refresh_token is not None,
-                "expires_at": credentials.expiry.isoformat() if credentials.expiry else None
-            }
-        )
+        # Return a nice HTML success page
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="ko">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Google Ads 연동 완료</title>
+            <style>
+                * {{
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }}
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                }}
+                .container {{
+                    background: white;
+                    border-radius: 16px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    padding: 48px;
+                    max-width: 500px;
+                    width: 100%;
+                    text-align: center;
+                }}
+                .icon {{
+                    font-size: 64px;
+                    margin-bottom: 24px;
+                }}
+                h1 {{
+                    color: #1a202c;
+                    font-size: 28px;
+                    font-weight: 700;
+                    margin-bottom: 16px;
+                }}
+                p {{
+                    color: #4a5568;
+                    font-size: 16px;
+                    line-height: 1.6;
+                    margin-bottom: 32px;
+                }}
+                .success-badge {{
+                    display: inline-block;
+                    background: #48bb78;
+                    color: white;
+                    padding: 8px 16px;
+                    border-radius: 20px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    margin-bottom: 24px;
+                }}
+                .info-box {{
+                    background: #f7fafc;
+                    border-radius: 8px;
+                    padding: 20px;
+                    margin-bottom: 32px;
+                    text-align: left;
+                }}
+                .info-item {{
+                    display: flex;
+                    justify-content: space-between;
+                    padding: 8px 0;
+                    border-bottom: 1px solid #e2e8f0;
+                }}
+                .info-item:last-child {{
+                    border-bottom: none;
+                }}
+                .info-label {{
+                    color: #718096;
+                    font-size: 14px;
+                }}
+                .info-value {{
+                    color: #2d3748;
+                    font-weight: 600;
+                    font-size: 14px;
+                }}
+                .next-steps {{
+                    background: #edf2f7;
+                    border-left: 4px solid #667eea;
+                    padding: 16px;
+                    margin-bottom: 32px;
+                    text-align: left;
+                }}
+                .next-steps h3 {{
+                    color: #2d3748;
+                    font-size: 16px;
+                    font-weight: 600;
+                    margin-bottom: 12px;
+                }}
+                .next-steps ol {{
+                    margin-left: 20px;
+                    color: #4a5568;
+                    font-size: 14px;
+                    line-height: 1.8;
+                }}
+                .button {{
+                    display: inline-block;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    padding: 14px 32px;
+                    border-radius: 8px;
+                    text-decoration: none;
+                    font-weight: 600;
+                    font-size: 16px;
+                    transition: transform 0.2s, box-shadow 0.2s;
+                }}
+                .button:hover {{
+                    transform: translateY(-2px);
+                    box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="icon">✅</div>
+                <div class="success-badge">연동 완료</div>
+                <h1>Google Ads 연동 성공!</h1>
+                <p>SEM-Agent가 이제 Google Ads 데이터에 접근할 수 있습니다.</p>
+
+                <div class="info-box">
+                    <div class="info-item">
+                        <span class="info-label">상태</span>
+                        <span class="info-value">✓ 활성화</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Refresh Token</span>
+                        <span class="info-value">{'✓ 있음' if encrypted_refresh_token else '✗ 없음'}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">만료 시간</span>
+                        <span class="info-value">{credentials.expiry.strftime('%Y-%m-%d %H:%M') if credentials.expiry else 'N/A'}</span>
+                    </div>
+                </div>
+
+                <div class="next-steps">
+                    <h3>📋 다음 단계</h3>
+                    <ol>
+                        <li>Slack으로 돌아가세요</li>
+                        <li><code>/sem-report</code> 명령어로 첫 리포트 생성</li>
+                        <li><code>/sem-config</code>로 자동 리포트 주기 설정</li>
+                    </ol>
+                </div>
+
+                <a href="slack://open" class="button">Slack으로 돌아가기</a>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content, status_code=200)
 
     except HTTPException:
         raise
