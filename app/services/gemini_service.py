@@ -57,7 +57,7 @@ class GeminiService:
             logger.error(f"Gemini API error: {e}")
             return "성과 데이터를 분석했습니다."
 
-    def generate_text(self, prompt: str, temperature: float = 0.7) -> str:
+    async def generate_text(self, prompt: str, temperature: float = 0.7) -> str:
         """Generate general text response using Gemini."""
         if not self.rate_limiter.can_proceed():
             logger.warning("Rate limit exceeded for Gemini API")
