@@ -30,9 +30,21 @@ class RateLimiter:
 class GeminiService:
     """Service for Gemini AI integration."""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash"):
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(model_name)
+    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash-latest"):
+        """Initialize GeminiService with v1 API compatible model.
+
+        Args:
+            api_key: Google API key for Gemini
+            model_name: Model to use (default: gemini-1.5-flash-latest for v1 API)
+        """
+        try:
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel(model_name)
+            logger.info(f"GeminiService initialized with model: {model_name}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini model {model_name}: {e}")
+            raise
+
         rpm = 60 if "flash" in model_name else 10
         self.rate_limiter = RateLimiter(max_requests=rpm)
 

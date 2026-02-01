@@ -32,10 +32,23 @@ class GoogleAdsService:
         self,
         customer_id: str,
         date_from: date,
-        date_to: date
+        date_to: date,
+        campaign_ids: List[str] = None
     ) -> Dict:
-        """Fetch performance metrics for date range."""
+        """Fetch performance metrics for date range.
+
+        Args:
+            customer_id: Google Ads customer ID
+            date_from: Start date
+            date_to: End date
+            campaign_ids: Optional list of campaign IDs to filter by
+
+        Returns:
+            Dict with aggregated metrics
+        """
         logger.info(f"Fetching metrics for {customer_id} from {date_from} to {date_to}")
+        if campaign_ids:
+            logger.info(f"Filtering by {len(campaign_ids)} campaigns: {campaign_ids}")
 
         try:
             ga_service = self.client.get_service("GoogleAdsService")
@@ -52,6 +65,12 @@ class GoogleAdsService:
                 WHERE segments.date BETWEEN '{date_from.strftime('%Y-%m-%d')}'
                     AND '{date_to.strftime('%Y-%m-%d')}'
             """
+
+            # Add campaign filter if campaign_ids provided
+            if campaign_ids:
+                # Build campaign ID filter: campaign.id IN (id1, id2, ...)
+                campaign_id_list = ', '.join(campaign_ids)
+                query += f" AND campaign.id IN ({campaign_id_list})"
 
             # Execute search request
             response = ga_service.search(customer_id=customer_id, query=query)
@@ -173,6 +192,94 @@ class GoogleAdsService:
 
         except Exception as e:
             logger.error(f"Failed to fetch search terms: {e}")
+            raise
+
+    def list_accessible_accounts(self) -> List[Dict]:
+        """List all Google Ads accounts accessible to the authenticated user.
+
+        Returns:
+            List of dicts with customer_id, account_name, currency, timezone
+        """
+        logger.info("Listing accessible Google Ads accounts")
+
+        try:
+            ga_service = self.client.get_service("GoogleAdsService")
+
+            # Query to list accessible customers
+            query = """
+                SELECT
+                    customer_client.id,
+                    customer_client.descriptive_name,
+                    customer_client.currency_code,
+                    customer_client.time_zone
+                FROM customer_client
+                WHERE customer_client.manager = FALSE
+            """
+
+            # Use login_customer_id to query accessible accounts
+            # The login_customer_id should be set during client initialization
+            login_customer_id = self.client.login_customer_id
+            if not login_customer_id:
+                logger.error("No login_customer_id set, cannot list accounts")
+                return []
+
+            response = ga_service.search(customer_id=login_customer_id, query=query)
+
+            accounts = []
+            for row in response:
+                accounts.append({
+                    "customer_id": str(row.customer_client.id),
+                    "account_name": row.customer_client.descriptive_name or f"Account {row.customer_client.id}",
+                    "currency": row.customer_client.currency_code,
+                    "timezone": row.customer_client.time_zone
+                })
+
+            logger.info(f"Found {len(accounts)} accessible accounts")
+            return accounts
+
+        except Exception as e:
+            logger.error(f"Failed to list accessible accounts: {e}")
+            return []
+
+    def list_campaigns(self, customer_id: str) -> List[Dict]:
+        """List all campaigns for a customer account.
+
+        Args:
+            customer_id: Google Ads customer ID
+
+        Returns:
+            List of dicts with id, name, status (only ENABLED and PAUSED campaigns)
+        """
+        logger.info(f"Listing campaigns for customer {customer_id}")
+
+        try:
+            ga_service = self.client.get_service("GoogleAdsService")
+
+            # GAQL query to fetch campaign details
+            query = """
+                SELECT
+                    campaign.id,
+                    campaign.name,
+                    campaign.status
+                FROM campaign
+                WHERE campaign.status IN ('ENABLED', 'PAUSED')
+            """
+
+            response = ga_service.search(customer_id=customer_id, query=query)
+
+            campaigns = []
+            for row in response:
+                campaigns.append({
+                    "id": str(row.campaign.id),
+                    "name": row.campaign.name,
+                    "status": row.campaign.status.name
+                })
+
+            logger.info(f"Found {len(campaigns)} campaigns")
+            return campaigns
+
+        except Exception as e:
+            logger.error(f"Failed to list campaigns: {e}")
             raise
 
     def add_negative_keyword(

@@ -17,7 +17,9 @@ from ...core.redis_client import redis_client
 from ...core.security import encrypt_token, decrypt_token
 from ...models.oauth import OAuthToken, OAuthProvider
 from ...models.tenant import Tenant, User
+from ...models.google_ads import GoogleAdsAccount
 from ...services.slack_service import SlackService
+from ...services.google_ads_service import GoogleAdsService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -209,6 +211,74 @@ async def google_oauth_callback(
         db.commit()
 
         logger.info(f"Successfully stored OAuth tokens for tenant {tenant_id}")
+
+        # Create GoogleAdsAccount records for accessible accounts
+        try:
+            # Get the refresh token to use (either new or existing)
+            refresh_token_to_use = credentials.refresh_token if credentials.refresh_token else None
+            if not refresh_token_to_use and existing_token and existing_token.refresh_token:
+                # Use existing refresh token if no new one was provided
+                refresh_token_to_use = decrypt_token(existing_token.refresh_token)
+
+            if refresh_token_to_use:
+                # Initialize Google Ads service with the credentials
+                google_ads_service = GoogleAdsService(
+                    developer_token=settings.google_developer_token,
+                    client_id=settings.google_client_id,
+                    client_secret=settings.google_client_secret,
+                    refresh_token=refresh_token_to_use,
+                    login_customer_id=settings.google_login_customer_id
+                )
+
+                # List accessible accounts
+                accessible_accounts = google_ads_service.list_accessible_accounts()
+
+                if accessible_accounts:
+                    logger.info(f"Found {len(accessible_accounts)} accessible Google Ads accounts for tenant {tenant_id}")
+
+                    # Set first account as active, others as inactive
+                    for idx, account_info in enumerate(accessible_accounts):
+                        customer_id = account_info["customer_id"]
+
+                        # Check if account already exists
+                        existing_account = db.query(GoogleAdsAccount).filter(
+                            GoogleAdsAccount.tenant_id == tenant_id,
+                            GoogleAdsAccount.customer_id == customer_id
+                        ).first()
+
+                        if existing_account:
+                            # Update existing account
+                            existing_account.account_name = account_info["account_name"]
+                            existing_account.currency = account_info.get("currency")
+                            existing_account.timezone = account_info.get("timezone")
+                            # Keep existing is_active status
+                            logger.info(f"Updated existing GoogleAdsAccount: {customer_id} for tenant {tenant_id}")
+                        else:
+                            # Create new account (first one is active, others inactive)
+                            new_account = GoogleAdsAccount(
+                                tenant_id=tenant_id,
+                                customer_id=customer_id,
+                                account_name=account_info["account_name"],
+                                currency=account_info.get("currency"),
+                                timezone=account_info.get("timezone"),
+                                is_active=(idx == 0)  # First account is active
+                            )
+                            db.add(new_account)
+                            logger.info(f"Created new GoogleAdsAccount: {customer_id} (active={idx == 0}) for tenant {tenant_id}")
+
+                    # Commit account records
+                    db.commit()
+                    logger.info(f"Successfully created/updated {len(accessible_accounts)} GoogleAdsAccount records for tenant {tenant_id}")
+                else:
+                    logger.warning(f"No accessible Google Ads accounts found for tenant {tenant_id}")
+            else:
+                logger.warning(f"No refresh token available to fetch Google Ads accounts for tenant {tenant_id}")
+
+        except Exception as e:
+            # Don't fail the OAuth flow if account listing fails
+            logger.error(f"Failed to create GoogleAdsAccount records for tenant {tenant_id}: {e}", exc_info=True)
+            # Rollback any partial account changes
+            db.rollback()
 
         # Send welcome message to Slack if Slack token exists
         try:

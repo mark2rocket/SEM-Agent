@@ -314,6 +314,7 @@ async def handle_config_command(db: Session, channel_id: str, text: str):
     """Handle /sem-config command for report scheduling."""
     from ...models.tenant import Tenant
     from ...models.report import ReportSchedule, ReportFrequency
+    from ...models.google_ads import GoogleAdsAccount
     from datetime import time
 
     # Find tenant by channel
@@ -364,7 +365,7 @@ async def handle_config_command(db: Session, channel_id: str, text: str):
         db.commit()
         db.refresh(schedule)
 
-    # Build response message
+    # Build frequency text for response
     frequency_text = {
         ReportFrequency.DAILY: "매일",
         ReportFrequency.WEEKLY: "매주 월요일",
@@ -374,6 +375,93 @@ async def handle_config_command(db: Session, channel_id: str, text: str):
 
     time_text = schedule.time_of_day.strftime("%H:%M")
 
+    # After schedule update, show campaign selection UI
+    try:
+        # Get Google Ads account for customer_id
+        account = db.query(GoogleAdsAccount).filter_by(
+            tenant_id=tenant.id, is_active=True
+        ).first()
+
+        if account:
+            # Fetch campaigns
+            google_ads_service = get_google_ads_service(tenant.id, db)
+            campaigns = google_ads_service.list_campaigns(account.customer_id)
+
+            if campaigns:
+                # Build checkbox options for campaigns
+                checkbox_options = []
+                for campaign in campaigns:
+                    checkbox_options.append({
+                        "text": {
+                            "type": "plain_text",
+                            "text": f"{campaign['name']} ({campaign['status']})"
+                        },
+                        "value": campaign['id']
+                    })
+
+                # Get currently selected campaign IDs
+                selected_values = []
+                if schedule.campaign_ids:
+                    selected_values = schedule.campaign_ids.split(',')
+
+                # Build Block Kit message with checkboxes
+                blocks = [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"📅 *리포트 설정 완료*\n\n"
+                                    f"• 주기: {frequency_text}\n"
+                                    f"• 시간: {time_text} (KST)\n"
+                                    f"• 상태: {'활성화' if schedule.is_active else '비활성화'}"
+                        }
+                    },
+                    {
+                        "type": "divider"
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "*리포트에 포함할 캠페인을 선택하세요:*\n선택하지 않으면 모든 캠페인이 포함됩니다."
+                        }
+                    },
+                    {
+                        "type": "actions",
+                        "elements": [
+                            {
+                                "type": "checkboxes",
+                                "action_id": "select_campaigns_config",
+                                "options": checkbox_options,
+                                "initial_options": [
+                                    {"text": {"type": "plain_text", "text": next((c['name'] for c in campaigns if c['id'] == val), val)}, "value": val}
+                                    for val in selected_values
+                                    if any(c['id'] == val for c in campaigns)
+                                ] if selected_values else []
+                            }
+                        ]
+                    },
+                    {
+                        "type": "context",
+                        "elements": [
+                            {
+                                "type": "mrkdwn",
+                                "text": f"💡 총 {len(campaigns)}개의 캠페인이 있습니다."
+                            }
+                        ]
+                    }
+                ]
+
+                return {
+                    "response_type": "ephemeral",
+                    "blocks": blocks
+                }
+
+    except Exception as e:
+        logger.error(f"Error fetching campaigns for config: {str(e)}", exc_info=True)
+        # Fall back to simple text response
+
+    # Fallback response (no campaigns or error)
     return {
         "response_type": "ephemeral",
         "text": f"📅 *리포트 설정*\n\n"
@@ -391,10 +479,8 @@ async def handle_config_command(db: Session, channel_id: str, text: str):
 async def handle_report_command(db: Session, channel_id: str):
     """Handle /sem-report command for immediate report generation."""
     from ...models.tenant import Tenant
-    from ...services.report_service import ReportService
-    from ...services.google_ads_service import GoogleAdsService
-    from ...services.gemini_service import GeminiService
-    from ...services.slack_service import SlackService
+    from ...models.google_ads import GoogleAdsAccount
+    from ...models.report import ReportSchedule
 
     # Find tenant by channel
     tenant = db.query(Tenant).filter_by(slack_channel_id=channel_id).first()
@@ -418,36 +504,90 @@ async def handle_report_command(db: Session, channel_id: str):
                     f"연동 후 다시 `/sem-report` 명령어를 입력해주세요."
         }
 
-    gemini_service = GeminiService(api_key=settings.gemini_api_key)
-    slack_service = SlackService(bot_token=tenant.bot_token)
-
-    report_service = ReportService(
-        db=db,
-        google_ads_service=google_ads_service,
-        gemini_service=gemini_service,
-        slack_service=slack_service
-    )
-
-    # Generate report asynchronously (fire and forget)
+    # Fetch campaigns and show selection UI
     try:
-        # Send immediate acknowledgment
-        response = {
-            "response_type": "in_channel",
-            "text": "📊 리포트를 생성 중입니다... 잠시만 기다려주세요."
-        }
+        # Get Google Ads account for customer_id
+        account = db.query(GoogleAdsAccount).filter_by(
+            tenant_id=tenant.id, is_active=True
+        ).first()
 
-        # Trigger report generation in background
-        # Note: In production, this should use Celery task
-        import asyncio
-        asyncio.create_task(_generate_report_async(report_service, tenant.id))
+        if not account:
+            return {
+                "response_type": "ephemeral",
+                "text": "❌ Google Ads 계정을 찾을 수 없습니다."
+            }
 
-        return response
+        # Fetch campaigns
+        campaigns = google_ads_service.list_campaigns(account.customer_id)
 
-    except Exception as e:
-        logger.error(f"Error triggering report: {str(e)}", exc_info=True)
+        if not campaigns:
+            return {
+                "response_type": "ephemeral",
+                "text": "❌ 사용 가능한 캠페인이 없습니다."
+            }
+
+        # Build checkbox options for campaigns
+        checkbox_options = []
+        for campaign in campaigns:
+            checkbox_options.append({
+                "text": {
+                    "type": "plain_text",
+                    "text": f"{campaign['name']} ({campaign['status']})"
+                },
+                "value": campaign['id']
+            })
+
+        # Get currently saved campaign selections (if any)
+        schedule = db.query(ReportSchedule).filter_by(tenant_id=tenant.id).first()
+        selected_values = []
+        if schedule and schedule.campaign_ids:
+            selected_values = schedule.campaign_ids.split(',')
+
+        # Build Block Kit message with checkboxes
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "📊 *리포트 생성*\n\n리포트에 포함할 캠페인을 선택하세요:"
+                }
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "checkboxes",
+                        "action_id": "select_campaigns_report",
+                        "options": checkbox_options,
+                        "initial_options": [
+                            {"text": {"type": "plain_text", "text": next((c['name'] for c in campaigns if c['id'] == val), val)}, "value": val}
+                            for val in selected_values
+                            if any(c['id'] == val for c in campaigns)
+                        ] if selected_values else []
+                    }
+                ]
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"💡 총 {len(campaigns)}개의 캠페인이 있습니다. 선택하지 않으면 모든 캠페인이 포함됩니다."
+                    }
+                ]
+            }
+        ]
+
         return {
             "response_type": "ephemeral",
-            "text": f"리포트 생성 중 오류가 발생했습니다: {str(e)}"
+            "blocks": blocks
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching campaigns for report: {str(e)}", exc_info=True)
+        return {
+            "response_type": "ephemeral",
+            "text": f"캠페인 조회 중 오류가 발생했습니다: {str(e)}"
         }
 
 
@@ -509,7 +649,89 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     slack_service = SlackService(bot_token=settings.slack_bot_token)
     keyword_service = KeywordService(db, google_ads_service, slack_service)
 
-    if action_id == "approve_keyword":
+    if action_id == "select_campaigns_config":
+        # Handle campaign selection for config flow
+        from ...models.report import ReportSchedule
+
+        # Get selected campaign IDs from action
+        selected_options = action.get("selected_options", [])
+        selected_campaign_ids = [opt["value"] for opt in selected_options]
+
+        # Update ReportSchedule with selected campaigns
+        schedule = db.query(ReportSchedule).filter_by(tenant_id=tenant.id).first()
+        if schedule:
+            # Store as comma-separated string
+            schedule.campaign_ids = ','.join(selected_campaign_ids) if selected_campaign_ids else None
+            db.commit()
+
+            return {
+                "text": f"✅ 캠페인 선택이 저장되었습니다.\n선택된 캠페인: {len(selected_campaign_ids)}개" if selected_campaign_ids else "✅ 모든 캠페인이 리포트에 포함됩니다.",
+                "replace_original": True,
+                "response_type": "ephemeral"
+            }
+        else:
+            return {
+                "text": "❌ 리포트 설정을 찾을 수 없습니다",
+                "replace_original": False,
+                "response_type": "ephemeral"
+            }
+
+    elif action_id == "select_campaigns_report":
+        # Handle campaign selection for immediate report generation
+        from ...models.report import ReportSchedule
+        from ...services.report_service import ReportService
+        from ...services.gemini_service import GeminiService
+
+        # Get selected campaign IDs from action
+        selected_options = action.get("selected_options", [])
+        selected_campaign_ids = [opt["value"] for opt in selected_options]
+
+        # Update ReportSchedule with selected campaigns
+        schedule = db.query(ReportSchedule).filter_by(tenant_id=tenant.id).first()
+        if not schedule:
+            # Create schedule if it doesn't exist
+            from ...models.report import ReportFrequency
+            from datetime import time
+            schedule = ReportSchedule(
+                tenant_id=tenant.id,
+                frequency=ReportFrequency.WEEKLY,
+                day_of_week=0,
+                time_of_day=time(9, 0)
+            )
+            db.add(schedule)
+
+        # Store selected campaigns
+        schedule.campaign_ids = ','.join(selected_campaign_ids) if selected_campaign_ids else None
+        db.commit()
+
+        # Trigger immediate report generation
+        try:
+            gemini_service = GeminiService(api_key=settings.gemini_api_key)
+            report_service = ReportService(
+                db=db,
+                google_ads_service=google_ads_service,
+                gemini_service=gemini_service,
+                slack_service=slack_service
+            )
+
+            # Generate report asynchronously
+            import asyncio
+            asyncio.create_task(_generate_report_async(report_service, tenant.id))
+
+            return {
+                "text": f"📊 리포트를 생성 중입니다...\n선택된 캠페인: {len(selected_campaign_ids)}개" if selected_campaign_ids else "📊 리포트를 생성 중입니다... (모든 캠페인 포함)",
+                "replace_original": True,
+                "response_type": "in_channel"
+            }
+        except Exception as e:
+            logger.error(f"Error generating report: {str(e)}", exc_info=True)
+            return {
+                "text": f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}",
+                "replace_original": True,
+                "response_type": "ephemeral"
+            }
+
+    elif action_id == "approve_keyword":
         # Get approval_request_id from action value
         approval_request_id = int(action.get("value"))
 

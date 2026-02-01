@@ -1,6 +1,6 @@
 """Report scheduling and history models."""
 
-from sqlalchemy import String, Integer, DateTime, Boolean, JSON, Enum as SQLEnum, Time, ForeignKey
+from sqlalchemy import String, Integer, DateTime, Boolean, JSON, Enum as SQLEnum, Time, ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime, time
 from typing import Optional
@@ -29,6 +29,7 @@ class ReportSchedule(Base):
     day_of_month: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # 1-31
     time_of_day: Mapped[time] = mapped_column(Time, default=time(9, 0))  # Default 09:00
     timezone: Mapped[str] = mapped_column(String(50), default="Asia/Seoul")
+    campaign_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

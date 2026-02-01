@@ -24,7 +24,7 @@ class ReportService:
         try:
             # Import models
             from ..models.google_ads import GoogleAdsAccount
-            from ..models.report import ReportHistory
+            from ..models.report import ReportHistory, ReportSchedule
             from ..models.tenant import Tenant
 
             # Get tenant and verify it exists
@@ -41,6 +41,13 @@ class ReportService:
                 logger.error(f"No active Google Ads account for tenant {tenant_id}")
                 return {"status": "error", "message": "No active Google Ads account"}
 
+            # Get report schedule to check for campaign filters
+            schedule = self.db.query(ReportSchedule).filter_by(tenant_id=tenant_id).first()
+            selected_campaign_ids = None
+            if schedule and schedule.campaign_ids:
+                selected_campaign_ids = schedule.campaign_ids.split(',')
+                logger.info(f"Filtering report by {len(selected_campaign_ids)} selected campaigns")
+
             # Get last week's date range
             period_start, period_end = self.get_weekly_period()
             logger.info(f"Report period: {period_start} to {period_end}")
@@ -49,7 +56,8 @@ class ReportService:
             metrics_data = self.google_ads.get_performance_metrics(
                 customer_id=account.customer_id,
                 date_from=period_start,
-                date_to=period_end
+                date_to=period_end,
+                campaign_ids=selected_campaign_ids
             )
 
             if not metrics_data or metrics_data.get("status") == "error":
@@ -66,7 +74,8 @@ class ReportService:
             prev_metrics_data = self.google_ads.get_performance_metrics(
                 customer_id=account.customer_id,
                 date_from=prev_start,
-                date_to=prev_end
+                date_to=prev_end,
+                campaign_ids=selected_campaign_ids
             )
 
             # Calculate week-over-week changes
