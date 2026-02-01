@@ -119,7 +119,7 @@ async def handle_message_event(event: dict, db: Session):
         # Initialize core services
         gemini_service = GeminiService(api_key=settings.gemini_api_key)
         google_ads_service = get_google_ads_service(tenant.id, db)
-        slack_service = SlackService(bot_token=tenant.bot_token)
+        slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
 
         # Initialize business services with correct dependencies
         conversation_service = ConversationService(db, redis_client)
@@ -154,6 +154,9 @@ async def handle_message_event(event: dict, db: Session):
         intent_result = intent_service.parse_intent(text, history)
         logger.info(f"Parsed intent: {intent_result['intent']}")
 
+        # Add original message text to entities for general chat handler
+        intent_result['entities']['original_message'] = text
+
         # Route action based on intent
         response_text = await action_router.route_action(
             intent=intent_result['intent'],
@@ -185,7 +188,7 @@ async def handle_message_event(event: dict, db: Session):
         logger.error(f"Error handling message event: {str(e)}", exc_info=True)
         # Try to send user-friendly error message
         try:
-            error_slack_service = SlackService(bot_token=settings.slack_bot_token)
+            error_slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
             error_slack_service.client.chat_postMessage(
                 channel=channel_id,
                 text="죄송합니다. 메시지 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
@@ -625,7 +628,7 @@ async def _generate_report_async(
         # Initialize services with fresh instances
         google_ads_service = get_google_ads_service(tenant_id, db)
         gemini_service = GeminiService(api_key=settings.gemini_api_key)
-        slack_service = SlackService(bot_token=tenant.bot_token)
+        slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
 
         report_service = ReportService(
             db=db,
@@ -642,7 +645,7 @@ async def _generate_report_async(
         logger.error(f"HTTP error generating report: {e.detail}", exc_info=True)
         # Post error message to Slack
         try:
-            slack_service = SlackService(bot_token=tenant.bot_token)
+            slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
             slack_service.client.chat_postMessage(
                 channel=channel_id,
                 text=f"❌ 리포트 생성 중 오류가 발생했습니다: {e.detail}"
@@ -714,7 +717,7 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
 
     # Initialize services
     google_ads_service = get_google_ads_service(tenant.id, db)
-    slack_service = SlackService(bot_token=settings.slack_bot_token)
+    slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
     keyword_service = KeywordService(db, google_ads_service, slack_service)
 
     if action_id == "select_campaigns_config":
