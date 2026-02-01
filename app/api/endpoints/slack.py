@@ -83,21 +83,24 @@ async def slack_events(request: Request, db: Session = Depends(get_db)):
 async def slack_commands(request: Request, db: Session = Depends(get_db)):
     """Handle Slack slash commands."""
     try:
-        # Parse form data
-        form_data = await request.form()
-        command = form_data.get("command")
-        text = form_data.get("text", "").strip()
-        user_id = form_data.get("user_id")
-        channel_id = form_data.get("channel_id")
-
-        # Verify signature
+        # Read raw body first for signature verification
         body = await request.body()
         body_str = body.decode("utf-8")
+
+        # Verify signature
         timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
         signature = request.headers.get("X-Slack-Signature", "")
 
         if not verify_slack_signature(body_str, timestamp, signature, settings.slack_signing_secret):
             raise HTTPException(status_code=403, detail="Invalid signature")
+
+        # Parse form data from body string
+        from urllib.parse import parse_qs
+        form_dict = parse_qs(body_str)
+        command = form_dict.get("command", [""])[0]
+        text = form_dict.get("text", [""])[0].strip()
+        user_id = form_dict.get("user_id", [""])[0]
+        channel_id = form_dict.get("channel_id", [""])[0]
 
         logger.info(f"Received command: {command} from user {user_id} in channel {channel_id}")
 
