@@ -212,6 +212,10 @@ async def google_oauth_callback(
 
         logger.info(f"Successfully stored OAuth tokens for tenant {tenant_id}")
 
+        # Track account creation status for user feedback
+        accounts_created = 0
+        account_creation_error = None
+
         # Create GoogleAdsAccount records for accessible accounts
         try:
             # Get the refresh token to use (either new or existing)
@@ -268,7 +272,8 @@ async def google_oauth_callback(
 
                     # Commit account records
                     db.commit()
-                    logger.info(f"Successfully created/updated {len(accessible_accounts)} GoogleAdsAccount records for tenant {tenant_id}")
+                    accounts_created = len(accessible_accounts)
+                    logger.info(f"Successfully created/updated {accounts_created} GoogleAdsAccount records for tenant {tenant_id}")
                 else:
                     logger.warning(f"No accessible Google Ads accounts found for tenant {tenant_id}")
             else:
@@ -276,6 +281,7 @@ async def google_oauth_callback(
 
         except Exception as e:
             # Don't fail the OAuth flow if account listing fails
+            account_creation_error = str(e)
             logger.error(f"Failed to create GoogleAdsAccount records for tenant {tenant_id}: {e}", exc_info=True)
             # Rollback any partial account changes
             db.rollback()
@@ -478,9 +484,17 @@ async def google_oauth_callback(
                         <span class="info-value">{'✓ 있음' if encrypted_refresh_token else '✗ 없음'}</span>
                     </div>
                     <div class="info-item">
+                        <span class="info-label">Google Ads 계정</span>
+                        <span class="info-value">{"✓ " + str(accounts_created) + "개 연동됨" if accounts_created > 0 else "✗ 연동 실패" if account_creation_error else "⚠️ 없음"}</span>
+                    </div>
+                    <div class="info-item">
                         <span class="info-label">만료 시간</span>
                         <span class="info-value">{credentials.expiry.strftime('%Y-%m-%d %H:%M') if credentials.expiry else 'N/A'}</span>
                     </div>
+                    {f'''<div style="background: #fee2e2; padding: 12px; border-radius: 6px; margin-top: 12px; border-left: 4px solid #dc2626;">
+                        <div style="color: #dc2626; font-size: 13px; font-weight: 600;">❌ 계정 연동 오류:</div>
+                        <div style="color: #991b1b; font-size: 12px; margin-top: 4px; font-family: monospace;">{account_creation_error}</div>
+                    </div>''' if account_creation_error else ''}
                 </div>
 
                 <div class="next-steps">
