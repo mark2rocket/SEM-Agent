@@ -94,14 +94,41 @@ class KeywordService:
 
                     logger.info(f"Detected inefficient keyword: {term['search_term']} (cost: {term['cost']}, clicks: {term['clicks']})")
 
-        # 6. Commit to database
+        # 6. Filter out recently ignored keywords (within 24 hours)
+        if detected_keywords:
+            recently_ignored_keywords = (
+                self.db.query(KeywordCandidate.search_term)
+                .join(ApprovalRequest, ApprovalRequest.keyword_candidate_id == KeywordCandidate.id)
+                .filter(
+                    KeywordCandidate.tenant_id == tenant_id,
+                    ApprovalRequest.action == ApprovalAction.IGNORE,
+                    ApprovalRequest.responded_at.isnot(None),
+                    ApprovalRequest.responded_at > datetime.utcnow() - timedelta(hours=24)
+                )
+                .all()
+            )
+
+            ignored_terms = {row[0] for row in recently_ignored_keywords}
+
+            if ignored_terms:
+                logger.info(f"Filtering out {len(ignored_terms)} recently ignored keywords: {ignored_terms}")
+
+            # Filter out ignored keywords from detected_keywords list
+            detected_keywords = [
+                kw for kw in detected_keywords
+                if kw["search_term"] not in ignored_terms
+            ]
+
+            logger.info(f"After filtering ignores: {len(detected_keywords)} keywords remain")
+
+        # 7. Commit to database
         if detected_keywords:
             self.db.commit()
             logger.info(f"Saved {len(detected_keywords)} new keyword candidates")
         else:
             logger.info("No new inefficient keywords detected")
 
-        # 7. Return list of detected keywords
+        # 8. Return list of detected keywords
         return detected_keywords
 
     def create_approval_request(self, tenant_id: int, keyword_data: Dict) -> int:

@@ -44,6 +44,23 @@ class SlackService:
         period: str
     ) -> Dict:
         """Build Block Kit message for weekly report."""
+        # Format metric values with week-over-week changes
+        cost_text = f"*총 비용:*\n₩{metrics['cost']:,.0f}"
+        if "cost_change" in metrics:
+            cost_text += f" {metrics['cost_change']}"
+
+        conversions_text = f"*전환수:*\n{metrics['conversions']:.0f}"
+        if "conversions_change" in metrics:
+            conversions_text += f" {metrics['conversions_change']}"
+
+        roas_text = f"*ROAS:*\n{metrics['roas']:.0f}%"
+        if "roas_change" in metrics:
+            roas_text += f" {metrics['roas_change']}"
+
+        clicks_text = f"*클릭수:*\n{metrics.get('clicks', 0):,}"
+        if "clicks_change" in metrics:
+            clicks_text += f" {metrics['clicks_change']}"
+
         blocks = [
             {
                 "type": "header",
@@ -52,10 +69,10 @@ class SlackService:
             {
                 "type": "section",
                 "fields": [
-                    {"type": "mrkdwn", "text": f"*총 비용:*\n₩{metrics['cost']:,.0f}"},
-                    {"type": "mrkdwn", "text": f"*전환수:*\n{metrics['conversions']:.0f}"},
-                    {"type": "mrkdwn", "text": f"*ROAS:*\n{metrics['roas']:.0f}%"},
-                    {"type": "mrkdwn", "text": f"*클릭수:*\n{metrics.get('clicks', 0):,}"}
+                    {"type": "mrkdwn", "text": cost_text},
+                    {"type": "mrkdwn", "text": conversions_text},
+                    {"type": "mrkdwn", "text": roas_text},
+                    {"type": "mrkdwn", "text": clicks_text}
                 ]
             },
             {"type": "divider"},

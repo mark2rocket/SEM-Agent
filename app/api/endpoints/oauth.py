@@ -14,8 +14,10 @@ import httpx
 from ...api.deps import get_db
 from ...config import settings
 from ...core.redis_client import redis_client
-from ...core.security import encrypt_token
+from ...core.security import encrypt_token, decrypt_token
 from ...models.oauth import OAuthToken, OAuthProvider
+from ...models.tenant import Tenant, User
+from ...services.slack_service import SlackService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -207,6 +209,68 @@ async def google_oauth_callback(
         db.commit()
 
         logger.info(f"Successfully stored OAuth tokens for tenant {tenant_id}")
+
+        # Send welcome message to Slack if Slack token exists
+        try:
+            # Get tenant with Slack OAuth token
+            tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+            if tenant:
+                # Get Slack bot token
+                slack_token = db.query(OAuthToken).filter(
+                    OAuthToken.tenant_id == tenant_id,
+                    OAuthToken.provider == OAuthProvider.SLACK
+                ).first()
+
+                if slack_token:
+                    # Decrypt the Slack bot token
+                    decrypted_bot_token = decrypt_token(slack_token.access_token)
+                    slack_service = SlackService(bot_token=decrypted_bot_token)
+
+                    # Get user's Slack user ID (use first user or workspace channel as fallback)
+                    user = db.query(User).filter(User.tenant_id == tenant_id).first()
+
+                    welcome_message = (
+                        "세팅 완료! 📅 **매주 월요일 오전 9시**에 주간 리포트가 발송됩니다.\n\n"
+                        "아래 버튼으로 리포트 주기를 변경할 수 있습니다."
+                    )
+
+                    # Determine target channel (user DM or workspace channel)
+                    target_channel = None
+                    if user and user.slack_user_id:
+                        target_channel = user.slack_user_id  # Send DM to user
+                    elif tenant.slack_channel_id:
+                        target_channel = tenant.slack_channel_id  # Fallback to workspace channel
+
+                    if target_channel:
+                        message_blocks = {
+                            "blocks": [
+                                {
+                                    "type": "section",
+                                    "text": {"type": "mrkdwn", "text": welcome_message}
+                                },
+                                {
+                                    "type": "actions",
+                                    "elements": [
+                                        {
+                                            "type": "button",
+                                            "text": {"type": "plain_text", "text": "리포트 주기 변경하기"},
+                                            "action_id": "configure_schedule",
+                                            "value": "open_config"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+
+                        slack_service.send_message(message=message_blocks, channel=target_channel)
+                        logger.info(f"Sent welcome message to Slack for tenant {tenant_id}")
+                    else:
+                        logger.warning(f"No Slack channel found for tenant {tenant_id}, skipping welcome message")
+                else:
+                    logger.info(f"No Slack token found for tenant {tenant_id}, skipping welcome message")
+        except Exception as e:
+            # Don't fail the OAuth flow if Slack message fails
+            logger.error(f"Failed to send Slack welcome message: {e}", exc_info=True)
 
         return JSONResponse(
             status_code=200,

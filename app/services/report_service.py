@@ -56,6 +56,25 @@ class ReportService:
                 logger.error(f"Failed to fetch metrics: {metrics_data}")
                 return {"status": "error", "message": "Failed to fetch Google Ads metrics"}
 
+            # Calculate previous period dates
+            period_days = (period_end - period_start).days + 1
+            prev_start = period_start - timedelta(days=period_days)
+            prev_end = period_start - timedelta(days=1)
+            logger.info(f"Previous period: {prev_start} to {prev_end}")
+
+            # Fetch previous period metrics for week-over-week comparison
+            prev_metrics_data = self.google_ads.get_performance_metrics(
+                customer_id=account.customer_id,
+                date_from=prev_start,
+                date_to=prev_end
+            )
+
+            # Calculate week-over-week changes
+            if prev_metrics_data and prev_metrics_data.get("status") != "error":
+                self._add_change_indicators(metrics_data, prev_metrics_data)
+            else:
+                logger.warning("Could not fetch previous period metrics for comparison")
+
             # Generate AI insight using Gemini
             insight_text = self.gemini.generate_report_insight(
                 metrics=metrics_data
@@ -111,3 +130,38 @@ class ReportService:
         last_sunday = today - timedelta(days=days_since_monday + 1)
         last_monday = last_sunday - timedelta(days=6)
         return last_monday, last_sunday
+
+    def _add_change_indicators(self, current_metrics: Dict, previous_metrics: Dict) -> None:
+        """Add week-over-week change indicators to metrics."""
+        def calculate_change(current_value: float, previous_value: float) -> tuple[str, str]:
+            """Calculate percentage change with emoji indicator."""
+            if previous_value == 0:
+                return "N/A", ""
+
+            pct_change = ((current_value - previous_value) / previous_value) * 100
+
+            if pct_change > 0:
+                emoji = "🔺"
+            elif pct_change < 0:
+                emoji = "🔻"
+            else:
+                emoji = "➡️"
+
+            return f"{abs(pct_change):.1f}%", emoji
+
+        # Calculate changes for key metrics
+        metrics_to_track = [
+            ("cost", "cost"),
+            ("conversions", "conversions"),
+            ("roas", "roas"),
+            ("clicks", "clicks")
+        ]
+
+        for metric_key, display_key in metrics_to_track:
+            current_val = current_metrics.get(metric_key, 0)
+            previous_val = previous_metrics.get(metric_key, 0)
+
+            change_pct, emoji = calculate_change(current_val, previous_val)
+
+            # Add change indicator to metrics dict
+            current_metrics[f"{display_key}_change"] = f"{emoji} {change_pct}" if emoji else change_pct

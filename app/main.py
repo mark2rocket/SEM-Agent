@@ -30,12 +30,17 @@ app = FastAPI(
 # Register exception handlers
 register_exception_handlers(app)
 
-# Initialize Redis client for rate limiting
-redis_client = None
+# Initialize Redis client for rate limiting (synchronous initialization for middleware)
+redis_client = Redis.from_url(
+    settings.redis_url,
+    encoding="utf-8",
+    decode_responses=True
+)
 
 # Add middleware (order matters: logging → tenant → rate limit → CORS)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(TenantContextMiddleware)
+app.add_middleware(RateLimitMiddleware, redis_client=redis_client)
 
 # CORS middleware
 app.add_middleware(
@@ -50,20 +55,8 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     """Initialize application on startup."""
-    global redis_client
     logger.info("Starting SEM-Agent API...")
-
-    # Initialize Redis client for rate limiting
-    redis_client = Redis.from_url(
-        settings.redis_url,
-        encoding="utf-8",
-        decode_responses=True
-    )
-    logger.info("Redis client initialized")
-
-    # Add rate limit middleware with Redis client
-    app.add_middleware(RateLimitMiddleware, redis_client=redis_client)
-    logger.info("Rate limit middleware registered")
+    logger.info("Redis client initialized and ready for rate limiting")
 
     # Initialize token encryption
     init_token_encryption(settings.token_encryption_key)
