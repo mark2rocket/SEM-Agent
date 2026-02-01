@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Force cache bust - 2026-02-01-23:05
+RUN echo "Cache bust timestamp: 2026-02-01-23:05"
+
 WORKDIR /app
 
 # Install system dependencies
