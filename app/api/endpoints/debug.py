@@ -93,9 +93,7 @@ async def create_google_ads_account(
         tenant_id=tenant_id,
         customer_id=customer_id,
         account_name=account_name,
-        is_active=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        is_active=True
     )
     db.add(new_account)
     db.commit()
