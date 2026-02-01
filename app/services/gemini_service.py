@@ -56,3 +56,17 @@ class GeminiService:
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
             return "성과 데이터를 분석했습니다."
+
+    def generate_text(self, prompt: str, temperature: float = 0.7) -> str:
+        """Generate general text response using Gemini."""
+        if not self.rate_limiter.can_proceed():
+            logger.warning("Rate limit exceeded for Gemini API")
+            return "죄송합니다. 잠시 후 다시 시도해주세요."
+
+        try:
+            self.rate_limiter.add_request()
+            response = self.model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            logger.error(f"Gemini API error: {e}")
+            return "응답을 생성하는 중 오류가 발생했습니다."

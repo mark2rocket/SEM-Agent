@@ -89,6 +89,42 @@ class GoogleAdsService:
             logger.error(f"Failed to fetch performance metrics: {e}")
             raise
 
+    async def get_campaign_metrics(
+        self,
+        customer_id: str,
+        date_from: date,
+        date_to: date,
+        metrics: List[str] = None
+    ) -> Dict:
+        """Async wrapper for get_performance_metrics with CTR calculation.
+
+        Args:
+            customer_id: Google Ads customer ID
+            date_from: Start date for metrics
+            date_to: End date for metrics
+            metrics: List of metric names to include (unused, kept for signature compatibility)
+
+        Returns:
+            Dict with cost, impressions, clicks, conversions, ctr, conversion_value, roas
+        """
+        if metrics is None:
+            metrics = ["cost", "impressions", "clicks", "conversions", "ctr"]
+
+        try:
+            # Call sync method (get_performance_metrics is synchronous)
+            result = self.get_performance_metrics(customer_id, date_from, date_to)
+
+            # Add CTR calculation
+            impressions = result.get("impressions", 0)
+            clicks = result.get("clicks", 0)
+            result["ctr"] = (clicks / impressions * 100) if impressions > 0 else 0.0
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to fetch campaign metrics: {e}")
+            raise
+
     def get_search_terms(
         self,
         customer_id: str,

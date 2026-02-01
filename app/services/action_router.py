@@ -13,6 +13,7 @@ from app.services.report_service import ReportService
 from app.services.keyword_service import KeywordService
 from app.services.google_ads_service import GoogleAdsService
 from app.services.gemini_service import GeminiService
+from app.models.report import ReportSchedule, ReportFrequency
 
 logger = logging.getLogger(__name__)
 
@@ -96,35 +97,27 @@ class ActionRouter:
     async def _handle_generate_report(self, entities: Dict[str, Any], tenant_id: int) -> str:
         """Handle report generation request."""
         try:
-            # Parse date range from entities
-            start_date, end_date = self._parse_date_range(entities)
+            logger.info(f"Generating report for tenant {tenant_id}")
 
-            logger.info(f"Generating report for tenant {tenant_id}: {start_date} to {end_date}")
+            # Generate report (service method only takes tenant_id)
+            report = await self.report_service.generate_weekly_report(tenant_id=tenant_id)
 
-            # Generate report
-            report = await self.report_service.generate_weekly_report(
-                tenant_id=tenant_id,
-                start_date=start_date,
-                end_date=end_date
-            )
+            # Check report status
+            if report.get('status') == 'error':
+                return f"Sorry, I couldn't generate the report: {report.get('message', 'Unknown error')}"
 
             # Format report summary for Slack
-            response = f"*Weekly Report Summary* ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')})\n\n"
-            response += f"*Total Spend:* ${report['total_spend']:,.2f}\n"
-            response += f"*Impressions:* {report['total_impressions']:,}\n"
-            response += f"*Clicks:* {report['total_clicks']:,}\n"
-            response += f"*CTR:* {report['average_ctr']:.2f}%\n"
-            response += f"*Conversions:* {report['total_conversions']}\n\n"
+            metrics = report.get('metrics', {})
+            period = report.get('period', 'Last week')
 
-            # Top campaigns
-            if report.get('top_campaigns'):
-                response += "*Top Campaigns:*\n"
-                for campaign in report['top_campaigns'][:3]:
-                    response += f"• {campaign['name']}: {campaign['clicks']} clicks, ${campaign['spend']:.2f}\n"
+            response = f"*Weekly Report Summary* ({period})\n\n"
+            response += f"*Total Spend:* ${metrics.get('cost', 0):,.2f}\n"
+            response += f"*Impressions:* {metrics.get('impressions', 0):,}\n"
+            response += f"*Clicks:* {metrics.get('clicks', 0):,}\n"
+            response += f"*Conversions:* {metrics.get('conversions', 0)}\n"
+            response += f"*ROAS:* {metrics.get('roas', 0):.2f}\n\n"
 
-            # Recommendations
-            if report.get('recommendations'):
-                response += f"\n*AI Recommendations:*\n{report['recommendations']}"
+            response += "_Report has been sent to your Slack channel!_"
 
             return response
 
@@ -137,26 +130,57 @@ class ActionRouter:
         try:
             frequency = entities.get('frequency', 'weekly')
             day = entities.get('day', 'Monday')
-            time = entities.get('time', '09:00')
+            time_str = entities.get('time', '09:00')
 
-            logger.info(f"Changing schedule for tenant {tenant_id}: {frequency}, {day}, {time}")
+            logger.info(f"Changing schedule for tenant {tenant_id}: {frequency}, {day}, {time_str}")
 
-            # Update schedule in database
-            success = await self.report_service.update_schedule(
-                tenant_id=tenant_id,
-                frequency=frequency,
-                day=day,
-                time=time
-            )
+            # Map day name to day_of_week integer (0=Monday, 6=Sunday)
+            day_map = {
+                'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+                'friday': 4, 'saturday': 5, 'sunday': 6
+            }
+            day_of_week = day_map.get(day.lower(), 0)
 
-            if success:
-                return f"✅ Report schedule updated!\n" \
-                       f"You'll now receive {frequency} reports on *{day}* at *{time}*."
+            # Parse time string to time object
+            from datetime import time as time_obj
+            hour, minute = map(int, time_str.split(':'))
+            time_of_day = time_obj(hour, minute)
+
+            # Map frequency string to ReportFrequency enum
+            frequency_map = {
+                'daily': ReportFrequency.DAILY,
+                'weekly': ReportFrequency.WEEKLY,
+                'monthly': ReportFrequency.MONTHLY,
+                'disabled': ReportFrequency.DISABLED
+            }
+            report_frequency = frequency_map.get(frequency.lower(), ReportFrequency.WEEKLY)
+
+            # Update ReportSchedule directly in database
+            schedule = self.db.query(ReportSchedule).filter_by(tenant_id=tenant_id).first()
+
+            if schedule:
+                schedule.frequency = report_frequency
+                schedule.day_of_week = day_of_week
+                schedule.time_of_day = time_of_day
+                schedule.updated_at = datetime.utcnow()
             else:
-                return "I couldn't update the schedule. Please check the settings and try again."
+                # Create new schedule if it doesn't exist
+                schedule = ReportSchedule(
+                    tenant_id=tenant_id,
+                    frequency=report_frequency,
+                    day_of_week=day_of_week,
+                    time_of_day=time_of_day
+                )
+                self.db.add(schedule)
+
+            self.db.commit()
+
+            return f"✅ Report schedule updated!\n" \
+                   f"You'll now receive {frequency} reports on *{day}* at *{time_str}*."
 
         except Exception as e:
             logger.error(f"Error changing schedule: {e}", exc_info=True)
+            self.db.rollback()
             return f"Sorry, I couldn't update the schedule: {str(e)}"
 
     async def _handle_answer_question(
@@ -212,24 +236,24 @@ Format the response in a friendly, conversational way with key metrics highlight
 
             logger.info(f"Suggesting keywords for tenant {tenant_id}: seeds={seed_keywords}")
 
-            # Get keyword suggestions
-            suggestions = await self.keyword_service.suggest_keywords(
-                tenant_id=tenant_id,
-                seed_keywords=seed_keywords,
-                campaign_id=campaign_id,
-                max_suggestions=max_suggestions
-            )
+            # Use Gemini to generate keyword suggestions
+            prompt = f"""You are a Google Ads keyword expert. Generate {max_suggestions} keyword suggestions based on these seed keywords: {', '.join(seed_keywords)}.
+
+For each keyword suggestion, provide:
+1. The keyword phrase
+2. Estimated search volume category (High/Medium/Low)
+3. Competition level (High/Medium/Low)
+4. Suggested bid range
+
+Format your response as a numbered list with clear sections for each metric.
+Focus on keywords that are relevant for search advertising campaigns."""
+
+            suggestions_text = await self.gemini_service.generate_text(prompt)
 
             # Format response
             response = "*Keyword Suggestions:*\n\n"
-
-            for idx, keyword in enumerate(suggestions, 1):
-                response += f"{idx}. *{keyword['keyword']}*\n"
-                response += f"   • Search Volume: {keyword.get('search_volume', 'N/A')}\n"
-                response += f"   • Competition: {keyword.get('competition', 'N/A')}\n"
-                response += f"   • Suggested Bid: ${keyword.get('suggested_bid', 0):.2f}\n\n"
-
-            response += "\n_Would you like me to add any of these keywords to your campaign?_"
+            response += suggestions_text
+            response += "\n\n_Would you like me to help you add any of these keywords to your campaign?_"
 
             return response
 
