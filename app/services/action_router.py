@@ -101,7 +101,7 @@ class ActionRouter:
             logger.info(f"Generating report for tenant {tenant_id}")
 
             # Generate report (service method only takes tenant_id)
-            report = await self.report_service.generate_weekly_report(tenant_id=tenant_id)
+            report = self.report_service.generate_weekly_report(tenant_id=tenant_id)
 
             # Check report status
             if report.get('status') == 'error':
