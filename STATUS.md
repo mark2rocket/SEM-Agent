@@ -113,56 +113,68 @@ VERDICT: APPROVED ✅
 
 ---
 
-## ⚠️ 남은 작업
+## ⚠️ 현재 상황 (2026-02-01 22:40)
 
-### Railway 배포 완료를 위한 필수 작업 (사용자 작업 필요)
+### Railway 배포 이슈 진행 중
 
-Railway에 환경 변수가 설정되지 않아 현재 502 에러 발생 중입니다.
+**증상**: Railway 배포가 502 에러 반환 (Application failed to respond)
 
-#### 해결 방법 (두 가지 옵션)
+**완료된 수정 사항**:
+- ✅ Dockerfile CMD: PORT 환경변수 사용 및 alembic 마이그레이션 추가
+- ✅ nixpacks.toml: 적절한 shell 실행 및 exec 사용
+- ✅ Procfile: web 프로세스에 마이그레이션 추가
+- ✅ Config.py: Celery URL을 Redis URL로 자동 기본값 설정
+- ✅ Redis 연결: 타임아웃 설정 (5초) 및 에러 핸들링 추가
+- ✅ 상세한 스타트업 로깅 추가
 
-**옵션 1: Railway CLI 사용 (자동화, 권장)**
-```bash
-# 1. Railway 로그인
-railway login
+**검증 완료**:
+- ✅ 로컬 서버 정상 작동 (http://localhost:8000/health 200 OK)
+- ✅ 모든 코드 커밋 및 GitHub 푸시 완료
+- ✅ Railway 자동 재배포 트리거됨
 
-# 2. 프로젝트 연결
-railway link
+**필요한 작업 (사용자)**: Railway 배포 로그 공유 필요
+코드는 로컬에서 정상 작동하므로, Railway 환경 설정 문제로 추정됩니다.
 
-# 3. 데이터베이스 추가 (Railway 대시보드)
-# - PostgreSQL 추가
-# - Redis 추가
+#### 디버깅을 위해 필요한 정보
 
-# 4. 환경 변수 자동 설정
-./setup-railway-env.sh
-```
+Railway 대시보드에서 다음 정보를 공유해주세요:
 
-**옵션 2: Railway 대시보드 사용 (수동)**
-1. Railway 대시보드 접속: https://railway.app
-2. SEM-Agent 프로젝트 선택
-3. PostgreSQL, Redis 서비스 추가
-4. Variables 탭에서 환경 변수 수동 입력 (상세 내용은 `RAILWAY_SETUP.md` 참조)
+1. **배포 로그** (Deployments 탭)
+   - Build 로그
+   - Deploy 로그
+   - 에러 메시지
 
-자세한 가이드: `RAILWAY_SETUP.md` 파일 참조
+2. **환경 변수 확인** (Variables 탭)
+   다음 변수들이 설정되어 있는지 확인:
+   - `DATABASE_URL` (PostgreSQL 서비스에서 자동)
+   - `REDIS_URL` (Redis 서비스에서 자동)
+   - `TOKEN_ENCRYPTION_KEY` (32-byte base64)
+   - `SECRET_KEY`
+   - Slack 관련: `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SLACK_SIGNING_SECRET`
+   - Google 관련: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+   - Google Ads: `GOOGLE_DEVELOPER_TOKEN`, `GOOGLE_LOGIN_CUSTOMER_ID`
+   - AI: `GEMINI_API_KEY`
+
+**참고**: `CELERY_BROKER_URL`과 `CELERY_RESULT_BACKEND`은 이제 설정하지 않아도 됩니다 (자동으로 REDIS_URL 사용)
 
 ---
 
 ## 📊 프로젝트 통계
 
-- **총 커밋 수**: 8개
+- **총 커밋 수**: 13개
 - **구현된 파일 수**: 30+ 파일
 - **코드 라인 수**: 약 3,000+ 라인
 - **의존성**: 25개 패키지
-- **개발 소요 시간**: 1일
+- **Railway 배포 시도**: 6회 (설정 수정 진행 중)
 
 ---
 
 ## 🚀 다음 단계
 
-### 즉시 (사용자 작업)
-1. ✅ Railway 환경 변수 설정 (위 가이드 참조)
-2. ⏳ Railway 자동 재배포 대기 (1-2분)
-3. ⏳ https://sem-agent.up.railway.app/health 확인
+### 즉시 (디버깅 진행 중)
+1. ⏳ **Railway 배포 로그 분석 대기 중** - 사용자가 로그 공유 시 진행
+2. ⏳ 환경 변수 검증
+3. ⏳ 배포 성공 후 https://sem-agent.up.railway.app/health 확인
 
 ### Railway 배포 후
 4. ⏳ Slack Event Subscriptions URL 설정
