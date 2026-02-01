@@ -658,8 +658,8 @@ async def _generate_report_async(
         # Post error message to Slack
         try:
             tenant = db.query(Tenant).filter_by(id=tenant_id).first()
-            if tenant and tenant.bot_token:
-                slack_service = SlackService(bot_token=tenant.bot_token)
+            if tenant:
+                slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
                 slack_service.client.chat_postMessage(
                     channel=channel_id,
                     text=f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}"
