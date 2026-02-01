@@ -123,6 +123,7 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
 
         # Handle /sem-help command
         if command == "/sem-help":
+            google_auth_url = f"{settings.api_url or 'https://sem-agent.up.railway.app'}/oauth/google/authorize"
             return {
                 "response_type": "ephemeral",
                 "text": "🤖 *SEM-Agent 도움말*\n\n"
@@ -131,9 +132,10 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
                         "• `/sem-config` - 리포트 설정 변경\n"
                         "• `/sem-report` - 즉시 리포트 생성\n\n"
                         "*시작하기:*\n"
-                        "1. Google Ads 계정 연동이 필요합니다\n"
+                        f"1. 📊 *Google Ads 연동*: <{google_auth_url}|여기를 클릭하여 계정 연동>\n"
                         "2. `/sem-config`로 리포트 주기 설정\n"
-                        "3. `/sem-report`로 즉시 리포트 확인"
+                        "3. `/sem-report`로 즉시 리포트 확인\n\n"
+                        "💡 리포트를 생성하려면 먼저 Google Ads 계정을 연동해야 합니다."
             }
 
         # Handle /sem-config command
@@ -256,7 +258,19 @@ async def handle_report_command(db: Session, channel_id: str):
         }
 
     # Initialize services
-    google_ads_service = get_google_ads_service(tenant.id, db)
+    try:
+        google_ads_service = get_google_ads_service(tenant.id, db)
+    except HTTPException:
+        # Google Ads not connected
+        google_auth_url = f"{settings.api_url or 'https://sem-agent.up.railway.app'}/oauth/google/authorize"
+        return {
+            "response_type": "ephemeral",
+            "text": f"❌ Google Ads 계정이 연동되지 않았습니다.\n\n"
+                    f"📊 *리포트를 생성하려면 먼저 Google Ads 계정을 연동하세요:*\n"
+                    f"<{google_auth_url}|여기를 클릭하여 계정 연동>\n\n"
+                    f"연동 후 다시 `/sem-report` 명령어를 입력해주세요."
+        }
+
     gemini_service = GeminiService(api_key=settings.gemini_api_key)
     slack_service = SlackService(bot_token=tenant.bot_token)
 
