@@ -10,6 +10,10 @@ from ...core.security import verify_slack_signature, decrypt_token
 from ...api.deps import get_db
 from ...config import settings
 from ...models.oauth import OAuthToken, OAuthProvider
+from ...services.intent_service import IntentService
+from ...services.conversation_service import ConversationService
+from ...services.action_router import ActionRouter
+from ...services.slack_service import SlackService
 
 if TYPE_CHECKING:
     from ...services.report_service import ReportService
@@ -57,6 +61,137 @@ def get_google_ads_service(tenant_id: int, db: Session):
     )
 
 
+async def handle_message_event(event: dict, db: Session):
+    """Process message events for natural language conversations.
+
+    Args:
+        event: Slack event payload containing message data
+        db: Database session
+    """
+    try:
+        # Ignore bot messages to prevent loops
+        if event.get("bot_id"):
+            logger.debug("Ignoring bot message")
+            return
+
+        # Ignore message_changed and message_deleted events
+        if event.get("subtype") in ["message_changed", "message_deleted"]:
+            logger.debug(f"Ignoring message subtype: {event.get('subtype')}")
+            return
+
+        # Extract event data
+        user_id = event.get("user")
+        channel_id = event.get("channel")
+        text = event.get("text", "")
+        thread_ts = event.get("thread_ts") or event.get("ts")  # Use message ts if not in thread
+        team_id = event.get("team")
+
+        if not all([user_id, channel_id, text, team_id]):
+            logger.warning("Missing required fields in message event")
+            return
+
+        logger.info(f"Processing message from user {user_id} in channel {channel_id}")
+
+        # Get or create tenant from team_id
+        from ...models.tenant import Tenant
+        tenant = db.query(Tenant).filter_by(workspace_id=team_id).first()
+        if not tenant:
+            logger.info(f"Creating new tenant for workspace {team_id}")
+            tenant = Tenant(
+                workspace_id=team_id,
+                workspace_name=team_id,
+                slack_channel_id=channel_id,
+                is_active=True
+            )
+            db.add(tenant)
+            db.commit()
+            db.refresh(tenant)
+
+        # Initialize services with correct dependencies
+        from ...services.gemini_service import GeminiService
+        from ...services.report_service import ReportService
+        from ...services.keyword_service import KeywordService
+        from ...core.redis_client import redis_client
+
+        # Initialize core services
+        gemini_service = GeminiService(api_key=settings.gemini_api_key)
+        google_ads_service = get_google_ads_service(tenant.id, db)
+        slack_service = SlackService(bot_token=tenant.bot_token)
+
+        # Initialize business services with correct dependencies
+        conversation_service = ConversationService(db, redis_client)
+        intent_service = IntentService(gemini_service)
+        report_service = ReportService(db, google_ads_service, gemini_service, slack_service)
+        keyword_service = KeywordService(db, google_ads_service, slack_service)
+
+        # Initialize action router with all required services
+        action_router = ActionRouter(
+            db=db,
+            report_service=report_service,
+            keyword_service=keyword_service,
+            google_ads_service=google_ads_service,
+            gemini_service=gemini_service
+        )
+
+        # Get or create conversation
+        conversation = conversation_service.get_or_create_conversation(
+            tenant_id=tenant.id,
+            user_id=user_id,
+            channel_id=channel_id,
+            thread_ts=thread_ts
+        )
+
+        # Get conversation history for context (last 5 messages)
+        history = conversation_service.get_conversation_history(
+            conversation_id=conversation.id,
+            limit=5
+        )
+
+        # Parse intent from message
+        intent_result = intent_service.parse_intent(text, history)
+        logger.info(f"Parsed intent: {intent_result['intent']}")
+
+        # Route action based on intent
+        response_text = await action_router.route_action(
+            intent=intent_result['intent'],
+            entities=intent_result['entities'],
+            tenant_id=tenant.id,
+            conversation_history=history
+        )
+
+        # Save user message and bot response
+        conversation_service.save_message(
+            conversation_id=conversation.id,
+            user_id=user_id,
+            message_text=text,
+            intent_type=intent_result['intent'],
+            entities=intent_result['entities'],
+            bot_response=response_text
+        )
+
+        # Send response to Slack in thread
+        slack_service.client.chat_postMessage(
+            channel=channel_id,
+            text=response_text,
+            thread_ts=thread_ts
+        )
+
+        logger.info(f"Successfully processed message and sent response")
+
+    except Exception as e:
+        logger.error(f"Error handling message event: {str(e)}", exc_info=True)
+        # Try to send user-friendly error message
+        try:
+            error_slack_service = SlackService(bot_token=settings.slack_bot_token)
+            error_slack_service.client.chat_postMessage(
+                channel=channel_id,
+                text="죄송합니다. 메시지 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+                thread_ts=thread_ts
+            )
+        except:
+            logger.error("Failed to send error message to user")
+
+
 @router.post("/events")
 async def slack_events(request: Request, db: Session = Depends(get_db)):
     """Handle Slack events."""
@@ -75,6 +210,18 @@ async def slack_events(request: Request, db: Session = Depends(get_db)):
     # Handle URL verification
     if payload.get("type") == "url_verification":
         return {"challenge": payload.get("challenge")}
+
+    # Handle event callbacks
+    if payload.get("type") == "event_callback":
+        event = payload.get("event", {})
+        event_type = event.get("type")
+
+        # Add team_id to event for tenant lookup
+        event["team"] = payload.get("team_id")
+
+        # Handle message and app_mention events
+        if event_type in ["message", "app_mention"]:
+            await handle_message_event(event, db)
 
     return {"ok": True}
 

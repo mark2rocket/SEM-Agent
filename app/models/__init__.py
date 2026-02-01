@@ -6,6 +6,7 @@ from .oauth import OAuthToken, OAuthProvider
 from .google_ads import GoogleAdsAccount, PerformanceThreshold
 from .report import ReportSchedule, ReportHistory, ReportFrequency
 from .keyword import KeywordCandidate, ApprovalRequest, KeywordStatus, ApprovalAction
+from .conversation import Conversation, ConversationMessage
 
 __all__ = [
     "Base",
@@ -22,4 +23,6 @@ __all__ = [
     "ApprovalRequest",
     "KeywordStatus",
     "ApprovalAction",
+    "Conversation",
+    "ConversationMessage",
 ]
