@@ -22,5 +22,5 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Expose port
 EXPOSE 8000
 
-# Default command (can be overridden in docker-compose)
-CMD uvicorn app.main:app --host 0.0.0.0 --port $PORT
+# Run migrations and start server
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
