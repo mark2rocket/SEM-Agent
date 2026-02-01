@@ -101,8 +101,25 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
         text = form_dict.get("text", [""])[0].strip()
         user_id = form_dict.get("user_id", [""])[0]
         channel_id = form_dict.get("channel_id", [""])[0]
+        team_id = form_dict.get("team_id", [""])[0]
+        team_domain = form_dict.get("team_domain", [""])[0]
 
         logger.info(f"Received command: {command} from user {user_id} in channel {channel_id}")
+
+        # Ensure tenant exists (auto-create if needed)
+        from ...models.tenant import Tenant
+        tenant = db.query(Tenant).filter_by(workspace_id=team_id).first()
+        if not tenant:
+            logger.info(f"Creating new tenant for workspace {team_id}")
+            tenant = Tenant(
+                workspace_id=team_id,
+                workspace_name=team_domain or team_id,
+                slack_channel_id=channel_id,
+                is_active=True
+            )
+            db.add(tenant)
+            db.commit()
+            db.refresh(tenant)
 
         # Handle /sem-help command
         if command == "/sem-help":
