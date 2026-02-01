@@ -81,10 +81,19 @@ async def startup_event():
         init_token_encryption(settings.token_encryption_key)
         logger.info("Token encryption initialized successfully")
 
-        # Create database tables
-        # Temporarily using SQLAlchemy create_all instead of migrations
-        logger.info("Creating database tables if they don't exist...")
-        Base.metadata.create_all(bind=engine)
+        # Run Alembic migrations
+        logger.info("Running database migrations...")
+        try:
+            from alembic.config import Config
+            from alembic import command
+            alembic_cfg = Config("alembic.ini")
+            command.upgrade(alembic_cfg, "head")
+            logger.info("Database migrations completed successfully")
+        except Exception as e:
+            logger.error(f"Failed to run migrations: {e}")
+            logger.info("Falling back to create_all...")
+            Base.metadata.create_all(bind=engine)
+
         logger.info("Database tables ready")
 
         logger.info("✅ SEM-Agent API started successfully")
