@@ -23,6 +23,4 @@ ENV PYTHONDONTWRITEBYTECODE=1
 EXPOSE 8000
 
 # Run migrations and start server with debug logging
-CMD python -c "import sys; print('=== Python OK ==='); sys.path.insert(0, '/app'); from app import main; print('=== Import OK ===')" && \
-    alembic upgrade head && \
-    uvicorn app.main:app --host 0.0.0.0 --port $PORT --log-level debug
+CMD python -c "import sys; print('=== Python OK ==='); sys.path.insert(0, '/app'); from app import main; print('=== Import OK ===')" && alembic upgrade head && echo "=== Alembic Done ===" && uvicorn app.main:app --host 0.0.0.0 --port $PORT --log-level debug
