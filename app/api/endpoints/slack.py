@@ -104,8 +104,23 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
 
         logger.info(f"Received command: {command} from user {user_id} in channel {channel_id}")
 
+        # Handle /sem-help command
+        if command == "/sem-help":
+            return {
+                "response_type": "ephemeral",
+                "text": "🤖 *SEM-Agent 도움말*\n\n"
+                        "*사용 가능한 명령어:*\n"
+                        "• `/sem-help` - 이 도움말 표시\n"
+                        "• `/sem-config` - 리포트 설정 변경\n"
+                        "• `/sem-report` - 즉시 리포트 생성\n\n"
+                        "*시작하기:*\n"
+                        "1. Google Ads 계정 연동이 필요합니다\n"
+                        "2. `/sem-config`로 리포트 주기 설정\n"
+                        "3. `/sem-report`로 즉시 리포트 확인"
+            }
+
         # Handle /sem-config command
-        if command == "/sem-config":
+        elif command == "/sem-config":
             return await handle_config_command(db, channel_id, text)
 
         # Handle /sem-report command
@@ -116,7 +131,7 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
         else:
             return {
                 "response_type": "ephemeral",
-                "text": "알 수 없는 명령어입니다. 사용 가능한 명령어: /sem-config, /sem-report"
+                "text": "알 수 없는 명령어입니다. `/sem-help`를 입력해서 사용 가능한 명령어를 확인하세요."
             }
 
     except HTTPException:
