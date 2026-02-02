@@ -434,16 +434,31 @@ async def handle_config_command(db: Session, channel_id: str, text: str):
                     },
                     {
                         "type": "actions",
+                        "block_id": "campaign_selection_config",
                         "elements": [
                             {
                                 "type": "checkboxes",
-                                "action_id": "select_campaigns_config",
+                                "action_id": "select_campaigns_config_checkbox",
                                 "options": checkbox_options,
                                 "initial_options": [
                                     {"text": {"type": "plain_text", "text": next((c['name'] for c in campaigns if c['id'] == val), val)}, "value": val}
                                     for val in selected_values
                                     if any(c['id'] == val for c in campaigns)
                                 ] if selected_values else []
+                            }
+                        ]
+                    },
+                    {
+                        "type": "actions",
+                        "elements": [
+                            {
+                                "type": "button",
+                                "text": {
+                                    "type": "plain_text",
+                                    "text": "✅ 저장"
+                                },
+                                "style": "primary",
+                                "action_id": "save_campaign_config_button"
                             }
                         ]
                     },
@@ -560,16 +575,31 @@ async def handle_report_command(db: Session, channel_id: str):
             },
             {
                 "type": "actions",
+                "block_id": "campaign_selection",
                 "elements": [
                     {
                         "type": "checkboxes",
-                        "action_id": "select_campaigns_report",
+                        "action_id": "select_campaigns_checkbox",
                         "options": checkbox_options,
                         "initial_options": [
                             {"text": {"type": "plain_text", "text": next((c['name'] for c in campaigns if c['id'] == val), val)}, "value": val}
                             for val in selected_values
                             if any(c['id'] == val for c in campaigns)
                         ] if selected_values else []
+                    }
+                ]
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "📊 리포트 생성"
+                        },
+                        "style": "primary",
+                        "action_id": "generate_report_button"
                     }
                 ]
             },
@@ -720,8 +750,44 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
     keyword_service = KeywordService(db, google_ads_service, slack_service)
 
-    if action_id == "select_campaigns_config":
-        # Handle campaign selection for config flow
+    if action_id == "save_campaign_config_button":
+        # Handle campaign config save button click
+        from ...models.report import ReportSchedule
+
+        # Get selected campaign IDs from the state (checkbox values)
+        state_values = payload.get("state", {}).get("values", {})
+        selected_campaign_ids = []
+
+        # Find the campaign_selection_config block
+        for block_id, block_data in state_values.items():
+            if "select_campaigns_config_checkbox" in block_data:
+                checkbox_data = block_data["select_campaigns_config_checkbox"]
+                selected_options = checkbox_data.get("selected_options", [])
+                selected_campaign_ids = [opt["value"] for opt in selected_options]
+                break
+
+        # Update ReportSchedule with selected campaigns
+        schedule = db.query(ReportSchedule).filter_by(tenant_id=tenant.id).first()
+        if schedule:
+            # Store as comma-separated string
+            schedule.campaign_ids = ','.join(selected_campaign_ids) if selected_campaign_ids else None
+            db.commit()
+
+            return {
+                "text": f"✅ 캠페인 선택이 저장되었습니다.\n선택된 캠페인: {len(selected_campaign_ids)}개" if selected_campaign_ids else "✅ 모든 캠페인이 리포트에 포함됩니다.",
+                "replace_original": True,
+                "response_type": "ephemeral"
+            }
+        else:
+            return {
+                "text": "❌ 리포트 설정을 찾을 수 없습니다",
+                "replace_original": False,
+                "response_type": "ephemeral"
+            }
+
+    elif action_id == "select_campaigns_config":
+        # Legacy handler - kept for backwards compatibility
+        # This shouldn't be called anymore since we changed to button-based flow
         from ...models.report import ReportSchedule
 
         # Get selected campaign IDs from action
@@ -797,6 +863,71 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
             }
         except Exception as e:
             logger.error(f"Error generating report: {str(e)}", exc_info=True)
+            return {
+                "text": f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}",
+                "replace_original": True,
+                "response_type": "ephemeral"
+            }
+
+    elif action_id == "generate_report_button":
+        # Handle report generation button click
+        from ...models.report import ReportSchedule
+        from ...services.report_service import ReportService
+        from ...services.gemini_service import GeminiService
+
+        # Get selected campaign IDs from the state (checkbox values)
+        # Access the block_actions to find the checkbox state
+        state_values = payload.get("state", {}).get("values", {})
+        selected_campaign_ids = []
+
+        # Find the campaign_selection block
+        for block_id, block_data in state_values.items():
+            if "select_campaigns_checkbox" in block_data:
+                checkbox_data = block_data["select_campaigns_checkbox"]
+                selected_options = checkbox_data.get("selected_options", [])
+                selected_campaign_ids = [opt["value"] for opt in selected_options]
+                break
+
+        # Update ReportSchedule with selected campaigns
+        schedule = db.query(ReportSchedule).filter_by(tenant_id=tenant.id).first()
+        if not schedule:
+            # Create schedule if it doesn't exist
+            from ...models.report import ReportFrequency
+            from datetime import time
+            schedule = ReportSchedule(
+                tenant_id=tenant.id,
+                frequency=ReportFrequency.WEEKLY,
+                day_of_week=0,
+                time_of_day=time(9, 0)
+            )
+            db.add(schedule)
+
+        # Store selected campaigns
+        schedule.campaign_ids = ','.join(selected_campaign_ids) if selected_campaign_ids else None
+        db.commit()
+
+        # Trigger immediate report generation
+        try:
+            # Generate report asynchronously
+            import asyncio
+            task = asyncio.create_task(
+                _generate_report_async(
+                    tenant_id=tenant.id,
+                    channel_id=channel_id,
+                    selected_campaign_ids=selected_campaign_ids
+                )
+            )
+            # Keep reference to prevent garbage collection
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+
+            return {
+                "text": f"📊 리포트를 생성 중입니다...\n선택된 캠페인: {len(selected_campaign_ids)}개" if selected_campaign_ids else "📊 리포트를 생성 중입니다... (모든 캠페인 포함)",
+                "replace_original": True,
+                "response_type": "in_channel"
+            }
+        except Exception as e:
+            logger.error(f"Error generating report from button: {str(e)}", exc_info=True)
             return {
                 "text": f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}",
                 "replace_original": True,
