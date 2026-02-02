@@ -21,7 +21,7 @@ slack-bolt==1.18.1
 slack-sdk==3.26.2
 
 # Google Ads
-google-ads==29.0.0
+google-ads==26.0.0
 
 # Google OAuth & API
 google-api-python-client==2.116.0
