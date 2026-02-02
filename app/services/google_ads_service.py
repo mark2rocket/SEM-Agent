@@ -51,6 +51,10 @@ class GoogleAdsService:
             logger.info(f"Filtering by {len(campaign_ids)} campaigns: {campaign_ids}")
 
         try:
+            # Remove hyphens from customer_id if present
+            customer_id_clean = customer_id.replace("-", "")
+            logger.info(f"Cleaned customer ID: {customer_id_clean}")
+
             ga_service = self.client.get_service("GoogleAdsService")
 
             # GAQL query for campaign metrics
@@ -73,7 +77,7 @@ class GoogleAdsService:
                 query += f" AND campaign.id IN ({campaign_id_list})"
 
             # Execute search request
-            response = ga_service.search(customer_id=customer_id, query=query)
+            response = ga_service.search(customer_id=customer_id_clean, query=query)
 
             # Aggregate metrics
             total_cost_micros = 0
@@ -155,6 +159,9 @@ class GoogleAdsService:
         logger.info(f"Fetching search terms for {customer_id} from {date_from} to {date_to}")
 
         try:
+            # Remove hyphens from customer_id if present
+            customer_id_clean = customer_id.replace("-", "")
+
             ga_service = self.client.get_service("GoogleAdsService")
 
             # GAQL query for search term report
@@ -173,7 +180,7 @@ class GoogleAdsService:
             """
 
             # Execute search request
-            response = ga_service.search(customer_id=customer_id, query=query)
+            response = ga_service.search(customer_id=customer_id_clean, query=query)
 
             # Build result list
             search_terms = []
@@ -223,7 +230,11 @@ class GoogleAdsService:
                 logger.error("No login_customer_id set, cannot list accounts")
                 return []
 
-            response = ga_service.search(customer_id=login_customer_id, query=query)
+            # Remove hyphens from login_customer_id if present
+            login_customer_id_clean = str(login_customer_id).replace("-", "")
+            logger.info(f"Using cleaned login_customer_id: {login_customer_id_clean}")
+
+            response = ga_service.search(customer_id=login_customer_id_clean, query=query)
 
             accounts = []
             for row in response:
@@ -251,9 +262,16 @@ class GoogleAdsService:
             List of dicts with id, name, status (only ENABLED and PAUSED campaigns)
         """
         logger.info(f"Listing campaigns for customer {customer_id}")
+        logger.info(f"Login customer ID: {self.client.login_customer_id}")
+        logger.info(f"Developer token: {self.client.developer_token[:10]}...")
 
         try:
+            # Remove hyphens from customer_id if present
+            customer_id_clean = customer_id.replace("-", "")
+            logger.info(f"Cleaned customer ID: {customer_id_clean}")
+
             ga_service = self.client.get_service("GoogleAdsService")
+            logger.info(f"GoogleAdsService retrieved successfully")
 
             # GAQL query to fetch campaign details
             query = """
@@ -265,7 +283,8 @@ class GoogleAdsService:
                 WHERE campaign.status IN ('ENABLED', 'PAUSED')
             """
 
-            response = ga_service.search(customer_id=customer_id, query=query)
+            logger.info(f"Executing search query with customer_id={customer_id_clean}")
+            response = ga_service.search(customer_id=customer_id_clean, query=query)
 
             campaigns = []
             for row in response:
@@ -279,7 +298,9 @@ class GoogleAdsService:
             return campaigns
 
         except Exception as e:
-            logger.error(f"Failed to list campaigns: {e}")
+            logger.error(f"Failed to list campaigns: {e}", exc_info=True)
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error details: {str(e)}")
             raise
 
     def add_negative_keyword(
@@ -293,6 +314,9 @@ class GoogleAdsService:
         logger.info(f"Adding negative keyword: {keyword_text} to campaign {campaign_id}")
 
         try:
+            # Remove hyphens from customer_id if present
+            customer_id_clean = customer_id.replace("-", "")
+
             # Get the CampaignCriterionService
             campaign_criterion_service = self.client.get_service("CampaignCriterionService")
 
@@ -302,7 +326,7 @@ class GoogleAdsService:
 
             # Set campaign resource name
             campaign_criterion.campaign = self.client.get_service("CampaignService").campaign_path(
-                customer_id, campaign_id
+                customer_id_clean, campaign_id
             )
 
             # Mark as negative criterion
@@ -325,7 +349,7 @@ class GoogleAdsService:
 
             # Execute the mutate request
             response = campaign_criterion_service.mutate_campaign_criteria(
-                customer_id=customer_id,
+                customer_id=customer_id_clean,
                 operations=[campaign_criterion_operation]
             )
 
