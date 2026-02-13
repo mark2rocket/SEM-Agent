@@ -204,6 +204,8 @@ class GoogleAdsService:
     def list_accessible_accounts(self) -> List[Dict]:
         """List all Google Ads accounts accessible to the authenticated user.
 
+        Handles both single accounts and manager accounts (MCC).
+
         Returns:
             List of dicts with customer_id, account_name, currency, timezone
         """
@@ -212,19 +214,7 @@ class GoogleAdsService:
         try:
             ga_service = self.client.get_service("GoogleAdsService")
 
-            # Query to list accessible customers
-            query = """
-                SELECT
-                    customer_client.id,
-                    customer_client.descriptive_name,
-                    customer_client.currency_code,
-                    customer_client.time_zone
-                FROM customer_client
-                WHERE customer_client.manager = FALSE
-            """
-
             # Use login_customer_id to query accessible accounts
-            # The login_customer_id should be set during client initialization
             login_customer_id = self.client.login_customer_id
             if not login_customer_id:
                 logger.error("No login_customer_id set, cannot list accounts")
@@ -234,22 +224,74 @@ class GoogleAdsService:
             login_customer_id_clean = str(login_customer_id).replace("-", "")
             logger.info(f"Using cleaned login_customer_id: {login_customer_id_clean}")
 
-            response = ga_service.search(customer_id=login_customer_id_clean, query=query)
-
             accounts = []
-            for row in response:
-                accounts.append({
-                    "customer_id": str(row.customer_client.id),
-                    "account_name": row.customer_client.descriptive_name or f"Account {row.customer_client.id}",
-                    "currency": row.customer_client.currency_code,
-                    "timezone": row.customer_client.time_zone
-                })
 
-            logger.info(f"Found {len(accounts)} accessible accounts")
-            return accounts
+            # Strategy 1: Try to get client accounts (for Manager/MCC accounts)
+            try:
+                logger.info("Attempting to list client accounts (Manager account mode)")
+                client_query = """
+                    SELECT
+                        customer_client.id,
+                        customer_client.descriptive_name,
+                        customer_client.currency_code,
+                        customer_client.time_zone
+                    FROM customer_client
+                    WHERE customer_client.manager = FALSE
+                """
+
+                client_response = ga_service.search(customer_id=login_customer_id_clean, query=client_query)
+
+                for row in client_response:
+                    accounts.append({
+                        "customer_id": str(row.customer_client.id),
+                        "account_name": row.customer_client.descriptive_name or f"Account {row.customer_client.id}",
+                        "currency": row.customer_client.currency_code,
+                        "timezone": row.customer_client.time_zone
+                    })
+
+                if accounts:
+                    logger.info(f"Found {len(accounts)} client accounts via Manager account")
+                    return accounts
+                else:
+                    logger.info("No client accounts found, trying single account mode")
+            except Exception as e:
+                logger.warning(f"Failed to list client accounts: {e}")
+
+            # Strategy 2: Get own account info (for single advertising accounts)
+            try:
+                logger.info("Attempting to get own account info (single account mode)")
+                own_account_query = """
+                    SELECT
+                        customer.id,
+                        customer.descriptive_name,
+                        customer.currency_code,
+                        customer.time_zone
+                    FROM customer
+                """
+
+                own_response = ga_service.search(customer_id=login_customer_id_clean, query=own_account_query)
+
+                for row in own_response:
+                    accounts.append({
+                        "customer_id": str(row.customer.id),
+                        "account_name": row.customer.descriptive_name or f"Account {row.customer.id}",
+                        "currency": row.customer.currency_code,
+                        "timezone": row.customer.time_zone
+                    })
+
+                if accounts:
+                    logger.info(f"Found own account: {accounts[0]['account_name']}")
+                    return accounts
+                else:
+                    logger.warning("No own account found either")
+            except Exception as e:
+                logger.warning(f"Failed to get own account info: {e}")
+
+            logger.warning(f"No accessible accounts found for login_customer_id: {login_customer_id_clean}")
+            return []
 
         except Exception as e:
-            logger.error(f"Failed to list accessible accounts: {e}")
+            logger.error(f"Failed to list accessible accounts: {e}", exc_info=True)
             return []
 
     def list_campaigns(self, customer_id: str) -> List[Dict]:
