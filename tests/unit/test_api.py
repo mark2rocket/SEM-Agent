@@ -113,8 +113,10 @@ class TestOAuthEndpoints:
         response = client.get("/oauth/google/callback?code=test_code&state=1:test_state_token")
 
         assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "success"
+        # OAuth callback returns HTML response, not JSON
+        assert "text/html" in response.headers["content-type"]
+        assert "Google Ads 연동 성공" in response.text
+        assert "연동 완료" in response.text
 
 
 class TestAPIDocumentation:

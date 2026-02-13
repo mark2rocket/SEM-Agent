@@ -318,7 +318,8 @@ class TestReportService:
         assert result["metrics"]["cost"] == 1500000
 
         # 7. Verify Google Ads was called correctly
-        mock_ads_instance.get_performance_metrics.assert_called_once()
+        # Weekly report makes 2 calls: this week + last week (for week-over-week comparison)
+        assert mock_ads_instance.get_performance_metrics.call_count == 2
         call_args = mock_ads_instance.get_performance_metrics.call_args
         assert call_args.kwargs["customer_id"] == "1234567890"
 
