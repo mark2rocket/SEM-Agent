@@ -658,7 +658,18 @@ async def _generate_report_async(
 
         # Generate report (this will post to Slack internally)
         result = report_service.generate_weekly_report(tenant_id)
-        logger.info(f"Report generated successfully: {result}")
+
+        if result.get("status") == "error":
+            error_msg = result.get("message", "알 수 없는 오류")
+            logger.error(f"Report generation failed: {error_msg}")
+            notify_channel = channel_id or tenant.slack_channel_id
+            if notify_channel:
+                slack_service.client.chat_postMessage(
+                    channel=notify_channel,
+                    text=f"❌ 리포트 생성에 실패했습니다: {error_msg}"
+                )
+        else:
+            logger.info(f"Report generated successfully: {result}")
 
     except HTTPException as e:
         logger.error(f"HTTP error generating report: {e.detail}", exc_info=True)
