@@ -690,29 +690,62 @@ async def _generate_report_async(
             error_msg = result.get("message", "알 수 없는 오류")
             logger.error(f"[Report] Failed: {error_msg}")
             _slack_notify(slack_service, notify_channel, f"❌ 리포트 생성 실패: {error_msg}")
+            # response_url로도 실패 메시지 전달 (채널 알림 실패해도 사용자가 볼 수 있게)
+            if response_url:
+                import requests as http_requests
+                try:
+                    http_requests.post(
+                        response_url,
+                        json={"text": f"❌ 리포트 생성 실패: {error_msg}", "replace_original": True},
+                        timeout=5
+                    )
+                except Exception as ru_err:
+                    logger.warning(f"[Report] Failed to update response_url with error: {ru_err}")
         else:
             logger.info(f"[Report] Success: {result}")
+            # response_url로 성공 메시지 전달
+            if response_url:
+                import requests as http_requests
+                try:
+                    http_requests.post(
+                        response_url,
+                        json={"text": "✅ 리포트가 생성되었습니다! 채널을 확인해주세요.", "replace_original": True},
+                        timeout=5
+                    )
+                except Exception as ru_err:
+                    logger.warning(f"[Report] Failed to update response_url with success: {ru_err}")
 
     except HTTPException as e:
         logger.error(f"[Report] HTTP error: {e.detail}", exc_info=True)
+        err_text = f"❌ 리포트 생성 중 오류: {e.detail}"
         try:
             slack_service = SlackService(bot_token=settings.slack_bot_token)
-            _slack_notify(slack_service, notify_channel,
-                         f"❌ 리포트 생성 중 오류가 발생했습니다: {e.detail}")
+            _slack_notify(slack_service, notify_channel, err_text)
         except Exception as slack_error:
             logger.error(f"Failed to post error to Slack: {slack_error}")
+        if response_url:
+            import requests as http_requests
+            try:
+                http_requests.post(response_url, json={"text": err_text, "replace_original": True}, timeout=5)
+            except Exception:
+                pass
 
     except Exception as e:
         logger.error(f"[Report] Unexpected error: {str(e)}", exc_info=True)
+        err_text = f"❌ 리포트 생성 중 오류: {str(e)}"
         try:
             tenant = db.query(Tenant).filter_by(id=tenant_id).first()
             bot_token = (tenant.bot_token if tenant else None) or settings.slack_bot_token
             slack_service = SlackService(bot_token=bot_token)
-            _slack_notify(slack_service, notify_channel,
-                         f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}"
-                )
+            _slack_notify(slack_service, notify_channel, err_text)
         except Exception as slack_error:
             logger.error(f"Failed to post error to Slack: {slack_error}")
+        if response_url:
+            import requests as http_requests
+            try:
+                http_requests.post(response_url, json={"text": err_text, "replace_original": True}, timeout=5)
+            except Exception:
+                pass
     finally:
         db.close()
 

@@ -98,9 +98,11 @@ class ReportService:
             )
 
             # Send message to Slack
+            # build_weekly_report_message returns {"blocks": [...]}, extract the list
+            blocks_list = message_blocks.get("blocks", message_blocks) if isinstance(message_blocks, dict) else message_blocks
             slack_response = self.slack.client.chat_postMessage(
                 channel=tenant.slack_channel_id,
-                blocks=message_blocks,
+                blocks=blocks_list,
                 text=f"Weekly Performance Report ({period_start} ~ {period_end})"
             )
 
