@@ -549,6 +549,25 @@ async def handle_report_command(db: Session, channel_id: str):
         if schedule and schedule.campaign_ids:
             selected_values = schedule.campaign_ids.split(',')
 
+        # Build initial_options (must match options text exactly, omit if empty)
+        matched_initial = [
+            {
+                "text": {"type": "plain_text", "text": f"{c['name']} ({c['status']})"},
+                "value": c['id']
+            }
+            for val in selected_values
+            for c in campaigns
+            if c['id'] == val
+        ] if selected_values else []
+
+        checkbox_element = {
+            "type": "checkboxes",
+            "action_id": "select_campaigns_report",
+            "options": checkbox_options,
+        }
+        if matched_initial:
+            checkbox_element["initial_options"] = matched_initial
+
         # Build Block Kit message with checkboxes
         blocks = [
             {
@@ -560,18 +579,7 @@ async def handle_report_command(db: Session, channel_id: str):
             },
             {
                 "type": "actions",
-                "elements": [
-                    {
-                        "type": "checkboxes",
-                        "action_id": "select_campaigns_report",
-                        "options": checkbox_options,
-                        "initial_options": [
-                            {"text": {"type": "plain_text", "text": next((c['name'] for c in campaigns if c['id'] == val), val)}, "value": val}
-                            for val in selected_values
-                            if any(c['id'] == val for c in campaigns)
-                        ] if selected_values else []
-                    }
-                ]
+                "elements": [checkbox_element]
             },
             {
                 "type": "context",
