@@ -589,6 +589,17 @@ async def handle_report_command(db: Session, channel_id: str):
                         "text": f"💡 총 {len(campaigns)}개의 캠페인이 있습니다. 선택하지 않으면 모든 캠페인이 포함됩니다."
                     }
                 ]
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "📊 리포트 생성"},
+                        "style": "primary",
+                        "action_id": "generate_report_button"
+                    }
+                ]
             }
         ]
 
@@ -696,7 +707,12 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
     payload = json.loads(form_data.get("payload"))
 
     user_id = payload["user"]["id"]
-    channel_id = payload.get("channel", {}).get("id", "")
+    # channel_id: ephemeral 메시지 인터랙션 시 payload.channel이 없을 수 있음
+    channel_id = (
+        payload.get("channel", {}).get("id")
+        or payload.get("container", {}).get("channel_id")
+        or ""
+    )
     actions = payload.get("actions", [])
 
     if not actions:
@@ -756,19 +772,14 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
             }
 
     elif action_id == "select_campaigns_report":
-        # Handle campaign selection for immediate report generation
+        # 체크박스 선택 시 DB에 저장만 하고 리포트는 생성하지 않음
         from ...models.report import ReportSchedule
-        from ...services.report_service import ReportService
-        from ...services.gemini_service import GeminiService
 
-        # Get selected campaign IDs from action
         selected_options = action.get("selected_options", [])
         selected_campaign_ids = [opt["value"] for opt in selected_options]
 
-        # Update ReportSchedule with selected campaigns
         schedule = db.query(ReportSchedule).filter_by(tenant_id=tenant.id).first()
         if not schedule:
-            # Create schedule if it doesn't exist
             from ...models.report import ReportFrequency
             from datetime import time
             schedule = ReportSchedule(
@@ -779,13 +790,22 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
             )
             db.add(schedule)
 
-        # Store selected campaigns
         schedule.campaign_ids = ','.join(selected_campaign_ids) if selected_campaign_ids else None
         db.commit()
 
-        # Trigger immediate report generation
+        # 선택 저장 완료 - 빈 200 응답으로 체크박스 UI 유지
+        return {"ok": True}
+
+    elif action_id == "generate_report_button":
+        # "리포트 생성" 버튼 클릭 시 DB에 저장된 선택으로 리포트 생성
+        from ...models.report import ReportSchedule
+
+        schedule = db.query(ReportSchedule).filter_by(tenant_id=tenant.id).first()
+        selected_campaign_ids = (
+            schedule.campaign_ids.split(',') if schedule and schedule.campaign_ids else []
+        )
+
         try:
-            # Generate report asynchronously
             import asyncio
             task = asyncio.create_task(
                 _generate_report_async(
@@ -794,7 +814,6 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
                     selected_campaign_ids=selected_campaign_ids
                 )
             )
-            # Keep reference to prevent garbage collection
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
 
