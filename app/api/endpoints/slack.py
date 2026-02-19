@@ -636,6 +636,17 @@ async def _generate_report_async(
 
     # Create new DB session for this background task
     db = next(get_db())
+    notify_channel = channel_id  # Slack 알림 채널 (fallback은 tenant 로드 후 결정)
+
+    def _slack_notify(slack_svc, ch, text):
+        """안전하게 Slack 알림 전송."""
+        if not ch:
+            logger.warning(f"No channel to notify: {text}")
+            return
+        try:
+            slack_svc.client.chat_postMessage(channel=ch, text=text)
+        except Exception as e:
+            logger.error(f"Failed to post to Slack: {e}")
 
     try:
         # Fetch tenant
@@ -644,7 +655,10 @@ async def _generate_report_async(
             logger.error(f"Tenant {tenant_id} not found for async report generation")
             return
 
+        notify_channel = channel_id or tenant.slack_channel_id
+
         # Initialize services with fresh instances
+        logger.info(f"[Report] Step 1: Initializing services for tenant {tenant_id}")
         google_ads_service = get_google_ads_service(tenant_id, db)
         gemini_service = GeminiService(api_key=settings.gemini_api_key)
         slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
@@ -656,43 +670,33 @@ async def _generate_report_async(
             slack_service=slack_service
         )
 
-        # Generate report (this will post to Slack internally)
+        logger.info(f"[Report] Step 2: Generating weekly report for tenant {tenant_id}")
         result = report_service.generate_weekly_report(tenant_id)
 
         if result.get("status") == "error":
             error_msg = result.get("message", "알 수 없는 오류")
-            logger.error(f"Report generation failed: {error_msg}")
-            notify_channel = channel_id or tenant.slack_channel_id
-            if notify_channel:
-                slack_service.client.chat_postMessage(
-                    channel=notify_channel,
-                    text=f"❌ 리포트 생성에 실패했습니다: {error_msg}"
-                )
+            logger.error(f"[Report] Failed: {error_msg}")
+            _slack_notify(slack_service, notify_channel, f"❌ 리포트 생성 실패: {error_msg}")
         else:
-            logger.info(f"Report generated successfully: {result}")
+            logger.info(f"[Report] Success: {result}")
 
     except HTTPException as e:
-        logger.error(f"HTTP error generating report: {e.detail}", exc_info=True)
-        # Post error message to Slack
+        logger.error(f"[Report] HTTP error: {e.detail}", exc_info=True)
         try:
-            slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
-            slack_service.client.chat_postMessage(
-                channel=channel_id,
-                text=f"❌ 리포트 생성 중 오류가 발생했습니다: {e.detail}"
-            )
+            slack_service = SlackService(bot_token=settings.slack_bot_token)
+            _slack_notify(slack_service, notify_channel,
+                         f"❌ 리포트 생성 중 오류가 발생했습니다: {e.detail}")
         except Exception as slack_error:
             logger.error(f"Failed to post error to Slack: {slack_error}")
 
     except Exception as e:
-        logger.error(f"Error generating report: {str(e)}", exc_info=True)
-        # Post error message to Slack
+        logger.error(f"[Report] Unexpected error: {str(e)}", exc_info=True)
         try:
             tenant = db.query(Tenant).filter_by(id=tenant_id).first()
-            if tenant:
-                slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
-                slack_service.client.chat_postMessage(
-                    channel=channel_id,
-                    text=f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}"
+            bot_token = (tenant.bot_token if tenant else None) or settings.slack_bot_token
+            slack_service = SlackService(bot_token=bot_token)
+            _slack_notify(slack_service, notify_channel,
+                         f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}"
                 )
         except Exception as slack_error:
             logger.error(f"Failed to post error to Slack: {slack_error}")
