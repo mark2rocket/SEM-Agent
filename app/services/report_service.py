@@ -17,7 +17,7 @@ class ReportService:
         self.gemini = gemini_service
         self.slack = slack_service
 
-    def generate_weekly_report(self, tenant_id: int) -> Dict:
+    def generate_weekly_report(self, tenant_id: int, notify_channel: str = None) -> Dict:
         """Generate weekly performance report."""
         logger.info(f"Generating weekly report for tenant {tenant_id}")
 
@@ -100,8 +100,12 @@ class ReportService:
             # Send message to Slack
             # build_weekly_report_message returns {"blocks": [...]}, extract the list
             blocks_list = message_blocks.get("blocks", message_blocks) if isinstance(message_blocks, dict) else message_blocks
+            target_channel = notify_channel or tenant.slack_channel_id
+            if not target_channel:
+                logger.error("No target channel for report. Set slack_channel_id on tenant or pass notify_channel.")
+                return {"status": "error", "message": "리포트를 보낼 채널이 설정되지 않았습니다."}
             slack_response = self.slack.client.chat_postMessage(
-                channel=tenant.slack_channel_id,
+                channel=target_channel,
                 blocks=blocks_list,
                 text=f"Weekly Performance Report ({period_start} ~ {period_end})"
             )

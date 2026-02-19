@@ -674,7 +674,19 @@ async def _generate_report_async(
         logger.info(f"[Report] Step 1: Initializing services for tenant {tenant_id}")
         google_ads_service = get_google_ads_service(tenant_id, db)
         gemini_service = GeminiService(api_key=settings.gemini_api_key)
-        slack_service = SlackService(bot_token=tenant.bot_token or settings.slack_bot_token)
+
+        # Slack bot token은 OAuthToken 테이블에 암호화 저장됨 → 복호화 필요
+        slack_oauth = db.query(OAuthToken).filter(
+            OAuthToken.tenant_id == tenant_id,
+            OAuthToken.provider == OAuthProvider.SLACK
+        ).first()
+        if slack_oauth and slack_oauth.access_token:
+            slack_bot_token = decrypt_token(slack_oauth.access_token)
+            logger.info(f"[Report] Using decrypted Slack token from OAuthToken table")
+        else:
+            slack_bot_token = settings.slack_bot_token
+            logger.warning(f"[Report] No Slack OAuthToken found, using settings token")
+        slack_service = SlackService(bot_token=slack_bot_token)
 
         report_service = ReportService(
             db=db,
@@ -683,8 +695,8 @@ async def _generate_report_async(
             slack_service=slack_service
         )
 
-        logger.info(f"[Report] Step 2: Generating weekly report for tenant {tenant_id}")
-        result = report_service.generate_weekly_report(tenant_id)
+        logger.info(f"[Report] Step 2: Generating weekly report for tenant {tenant_id}, channel={notify_channel}")
+        result = report_service.generate_weekly_report(tenant_id, notify_channel=notify_channel)
 
         if result.get("status") == "error":
             error_msg = result.get("message", "알 수 없는 오류")
