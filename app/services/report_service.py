@@ -17,7 +17,7 @@ class ReportService:
         self.gemini = gemini_service
         self.slack = slack_service
 
-    def generate_weekly_report(self, tenant_id: int, notify_channel: str = None) -> Dict:
+    def generate_weekly_report(self, tenant_id: int, notify_channel: str = None, response_url: str = None) -> Dict:
         """Generate weekly performance report."""
         logger.info(f"Generating weekly report for tenant {tenant_id}")
 
@@ -101,14 +101,49 @@ class ReportService:
             # build_weekly_report_message returns {"blocks": [...]}, extract the list
             blocks_list = message_blocks.get("blocks", message_blocks) if isinstance(message_blocks, dict) else message_blocks
             target_channel = notify_channel or tenant.slack_channel_id
-            if not target_channel:
-                logger.error("No target channel for report. Set slack_channel_id on tenant or pass notify_channel.")
-                return {"status": "error", "message": "리포트를 보낼 채널이 설정되지 않았습니다."}
-            slack_response = self.slack.client.chat_postMessage(
-                channel=target_channel,
-                blocks=blocks_list,
-                text=f"Weekly Performance Report ({period_start} ~ {period_end})"
-            )
+            report_text = f"Weekly Performance Report ({period_start} ~ {period_end})"
+            slack_ts = None
+
+            # 방법 1: chat_postMessage (봇 토큰 필요)
+            if target_channel:
+                try:
+                    slack_response = self.slack.client.chat_postMessage(
+                        channel=target_channel,
+                        blocks=blocks_list,
+                        text=report_text
+                    )
+                    slack_ts = slack_response.get("ts")
+                    logger.info(f"Report posted via chat_postMessage to {target_channel}")
+                except Exception as post_error:
+                    logger.warning(f"chat_postMessage failed: {post_error} — trying response_url fallback")
+
+            # 방법 2: response_url (봇 토큰 불필요, 채널에 공개 게시 가능)
+            if slack_ts is None and response_url:
+                import requests as http_requests
+                try:
+                    r = http_requests.post(
+                        response_url,
+                        json={
+                            "response_type": "in_channel",
+                            "replace_original": False,
+                            "blocks": blocks_list,
+                            "text": report_text
+                        },
+                        timeout=10
+                    )
+                    if r.status_code == 200:
+                        slack_ts = "response_url"
+                        logger.info("Report posted via response_url fallback")
+                    else:
+                        logger.error(f"response_url fallback failed: {r.status_code} {r.text}")
+                except Exception as e:
+                    logger.error(f"response_url fallback exception: {e}")
+
+            if slack_ts is None:
+                return {"status": "error", "message": "리포트를 채널에 게시할 수 없습니다. 봇 권한 또는 채널 설정을 확인하세요."}
+
+            # slack_response 호환을 위한 변수 설정 (ts 저장에 사용)
+            slack_response = {"ts": slack_ts if slack_ts != "response_url" else None}
 
             # Save report to database
             report_history = ReportHistory(

@@ -696,7 +696,11 @@ async def _generate_report_async(
         )
 
         logger.info(f"[Report] Step 2: Generating weekly report for tenant {tenant_id}, channel={notify_channel}")
-        result = report_service.generate_weekly_report(tenant_id, notify_channel=notify_channel)
+        result = report_service.generate_weekly_report(
+            tenant_id,
+            notify_channel=notify_channel,
+            response_url=response_url
+        )
 
         if result.get("status") == "error":
             error_msg = result.get("message", "알 수 없는 오류")
@@ -715,17 +719,17 @@ async def _generate_report_async(
                     logger.warning(f"[Report] Failed to update response_url with error: {ru_err}")
         else:
             logger.info(f"[Report] Success: {result}")
-            # response_url로 성공 메시지 전달
+            # 성공 시 에페머럴 "생성 중" 메시지 제거 (리포트는 이미 채널에 공개 게시됨)
             if response_url:
                 import requests as http_requests
                 try:
                     http_requests.post(
                         response_url,
-                        json={"text": "✅ 리포트가 생성되었습니다! 채널을 확인해주세요.", "replace_original": True},
+                        json={"delete_original": True},
                         timeout=5
                     )
                 except Exception as ru_err:
-                    logger.warning(f"[Report] Failed to update response_url with success: {ru_err}")
+                    logger.warning(f"[Report] Failed to delete ephemeral message: {ru_err}")
 
     except HTTPException as e:
         logger.error(f"[Report] HTTP error: {e.detail}", exc_info=True)
