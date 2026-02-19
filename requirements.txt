@@ -20,8 +20,7 @@ celery[redis]==5.3.6
 slack-bolt==1.18.1
 slack-sdk==3.26.2
 
-# Google Ads
-google-ads==24.1.0
+# Google Ads (REST API - no library needed, using requests directly)
 
 # Google OAuth & API
 google-api-python-client==2.116.0
@@ -39,6 +38,7 @@ bcrypt>=4.0,<5.0  # passlib 1.7.4 is not compatible with bcrypt 5.x
 
 # HTTP Client
 httpx==0.26.0
+requests==2.31.0  # For Google Ads REST API
 
 # Testing
 pytest==7.4.4

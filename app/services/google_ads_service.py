@@ -1,15 +1,24 @@
-"""Google Ads API service."""
+"""Google Ads API service - REST API implementation."""
 
-from google.ads.googleads.client import GoogleAdsClient
+import requests
 from datetime import date
-from typing import List, Dict
+from typing import List, Dict, Optional
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
 
 class GoogleAdsService:
-    """Service for Google Ads API integration."""
+    """Service for Google Ads API integration using REST API."""
+
+    # API 버전
+    API_VERSION = "v21"
+    BASE_URL = f"https://googleads.googleapis.com/{API_VERSION}"
+
+    # Access token 캐시
+    _access_token: Optional[str] = None
+    _token_expiry: float = 0
 
     def __init__(
         self,
@@ -19,14 +28,122 @@ class GoogleAdsService:
         refresh_token: str,
         login_customer_id: str = None
     ):
-        self.client = GoogleAdsClient.load_from_dict({
-            "developer_token": developer_token,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh_token,
-            "login_customer_id": login_customer_id,
-            "use_proto_plus": True
-        })
+        """Initialize Google Ads service with OAuth credentials.
+
+        Args:
+            developer_token: Google Ads Developer Token
+            client_id: OAuth Client ID
+            client_secret: OAuth Client Secret
+            refresh_token: OAuth Refresh Token
+            login_customer_id: Manager account ID (optional)
+        """
+        self.developer_token = developer_token
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.refresh_token = refresh_token
+        self.login_customer_id = login_customer_id
+
+    def _get_access_token(self) -> str:
+        """Get access token (cached or refresh).
+
+        Returns:
+            Access token string
+        """
+        # 캐시된 토큰이 유효하면 재사용
+        if self._access_token and time.time() < self._token_expiry - 60:
+            return self._access_token
+
+        logger.info("Refreshing access token")
+
+        token_url = "https://oauth2.googleapis.com/token"
+        payload = {
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "refresh_token": self.refresh_token,
+            "grant_type": "refresh_token",
+        }
+
+        try:
+            response = requests.post(token_url, data=payload, timeout=10)
+            response.raise_for_status()
+
+            token_data = response.json()
+            self._access_token = token_data["access_token"]
+            expires_in = token_data.get("expires_in", 3600)
+            self._token_expiry = time.time() + expires_in
+
+            logger.info("Access token refreshed successfully")
+            return self._access_token
+
+        except Exception as e:
+            logger.error(f"Failed to refresh access token: {e}")
+            raise
+
+    def _build_headers(self) -> Dict[str, str]:
+        """Build headers for Google Ads API requests.
+
+        Returns:
+            Headers dictionary
+        """
+        access_token = self._get_access_token()
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "developer-token": self.developer_token,
+            "Content-Type": "application/json",
+        }
+
+        # Manager account로 접근하는 경우
+        if self.login_customer_id:
+            headers["login-customer-id"] = str(self.login_customer_id).replace("-", "")
+
+        return headers
+
+    def _call_search_stream(
+        self,
+        customer_id: str,
+        query: str
+    ) -> List[Dict]:
+        """Call Google Ads searchStream API.
+
+        Args:
+            customer_id: Google Ads customer ID
+            query: GAQL query string
+
+        Returns:
+            List of result rows
+        """
+        customer_id_clean = customer_id.replace("-", "")
+        endpoint = f"{self.BASE_URL}/customers/{customer_id_clean}/googleAds:searchStream"
+
+        headers = self._build_headers()
+        payload = {"query": query}
+
+        try:
+            logger.debug(f"Calling searchStream for customer {customer_id_clean}")
+            logger.debug(f"Query: {query.strip()}")
+
+            response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+
+            if response.status_code != 200:
+                logger.error(f"API error ({response.status_code}): {response.text}")
+                response.raise_for_status()
+
+            # searchStream returns array of chunks
+            data = response.json()
+            results = []
+
+            if isinstance(data, list):
+                for chunk in data:
+                    chunk_results = chunk.get("results", [])
+                    results.extend(chunk_results)
+
+            logger.debug(f"Received {len(results)} results")
+            return results
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to call searchStream: {e}")
+            raise
 
     def get_performance_metrics(
         self,
@@ -51,12 +168,6 @@ class GoogleAdsService:
             logger.info(f"Filtering by {len(campaign_ids)} campaigns: {campaign_ids}")
 
         try:
-            # Remove hyphens from customer_id if present
-            customer_id_clean = customer_id.replace("-", "")
-            logger.info(f"Cleaned customer ID: {customer_id_clean}")
-
-            ga_service = self.client.get_service("GoogleAdsService")
-
             # GAQL query for campaign metrics
             query = f"""
                 SELECT
@@ -72,12 +183,11 @@ class GoogleAdsService:
 
             # Add campaign filter if campaign_ids provided
             if campaign_ids:
-                # Build campaign ID filter: campaign.id IN (id1, id2, ...)
                 campaign_id_list = ', '.join(campaign_ids)
                 query += f" AND campaign.id IN ({campaign_id_list})"
 
             # Execute search request
-            response = ga_service.search(customer_id=customer_id_clean, query=query)
+            results = self._call_search_stream(customer_id, query)
 
             # Aggregate metrics
             total_cost_micros = 0
@@ -86,12 +196,13 @@ class GoogleAdsService:
             total_clicks = 0
             total_impressions = 0
 
-            for row in response:
-                total_cost_micros += row.metrics.cost_micros
-                total_conversions += row.metrics.conversions
-                total_conversion_value += row.metrics.conversions_value
-                total_clicks += row.metrics.clicks
-                total_impressions += row.metrics.impressions
+            for row in results:
+                metrics = row.get("metrics", {})
+                total_cost_micros += int(metrics.get("costMicros", 0))
+                total_conversions += float(metrics.get("conversions", 0))
+                total_conversion_value += float(metrics.get("conversionsValue", 0))
+                total_clicks += int(metrics.get("clicks", 0))
+                total_impressions += int(metrics.get("impressions", 0))
 
             # Convert micros to actual currency
             cost = total_cost_micros / 1_000_000
@@ -155,15 +266,20 @@ class GoogleAdsService:
         date_to: date,
         min_cost: float = 0
     ) -> List[Dict]:
-        """Get search terms with performance data."""
+        """Get search terms with performance data.
+
+        Args:
+            customer_id: Google Ads customer ID
+            date_from: Start date
+            date_to: End date
+            min_cost: Minimum cost filter (in currency units)
+
+        Returns:
+            List of search term dicts
+        """
         logger.info(f"Fetching search terms for {customer_id} from {date_from} to {date_to}")
 
         try:
-            # Remove hyphens from customer_id if present
-            customer_id_clean = customer_id.replace("-", "")
-
-            ga_service = self.client.get_service("GoogleAdsService")
-
             # GAQL query for search term report
             query = f"""
                 SELECT
@@ -180,18 +296,22 @@ class GoogleAdsService:
             """
 
             # Execute search request
-            response = ga_service.search(customer_id=customer_id_clean, query=query)
+            results = self._call_search_stream(customer_id, query)
 
             # Build result list
             search_terms = []
-            for row in response:
+            for row in results:
+                search_term_view = row.get("searchTermView", {})
+                campaign = row.get("campaign", {})
+                metrics = row.get("metrics", {})
+
                 search_terms.append({
-                    "search_term": row.search_term_view.search_term,
-                    "campaign_id": str(row.campaign.id),
-                    "campaign_name": row.campaign.name,
-                    "cost": row.metrics.cost_micros / 1_000_000,
-                    "clicks": row.metrics.clicks,
-                    "conversions": row.metrics.conversions
+                    "search_term": search_term_view.get("searchTerm", ""),
+                    "campaign_id": str(campaign.get("id", "")),
+                    "campaign_name": campaign.get("name", ""),
+                    "cost": int(metrics.get("costMicros", 0)) / 1_000_000,
+                    "clicks": int(metrics.get("clicks", 0)),
+                    "conversions": float(metrics.get("conversions", 0))
                 })
 
             logger.info(f"Found {len(search_terms)} search terms")
@@ -212,17 +332,12 @@ class GoogleAdsService:
         logger.info("Listing accessible Google Ads accounts")
 
         try:
-            ga_service = self.client.get_service("GoogleAdsService")
-
-            # Use login_customer_id to query accessible accounts
-            login_customer_id = self.client.login_customer_id
-            if not login_customer_id:
+            if not self.login_customer_id:
                 logger.error("No login_customer_id set, cannot list accounts")
                 return []
 
-            # Remove hyphens from login_customer_id if present
-            login_customer_id_clean = str(login_customer_id).replace("-", "")
-            logger.info(f"Using cleaned login_customer_id: {login_customer_id_clean}")
+            login_customer_id_clean = str(self.login_customer_id).replace("-", "")
+            logger.info(f"Using login_customer_id: {login_customer_id_clean}")
 
             accounts = []
 
@@ -239,14 +354,16 @@ class GoogleAdsService:
                     WHERE customer_client.manager = FALSE
                 """
 
-                client_response = ga_service.search(customer_id=login_customer_id_clean, query=client_query)
+                results = self._call_search_stream(login_customer_id_clean, client_query)
 
-                for row in client_response:
+                for row in results:
+                    customer_client = row.get("customerClient", {})
+                    customer_id = str(customer_client.get("id", ""))
                     accounts.append({
-                        "customer_id": str(row.customer_client.id),
-                        "account_name": row.customer_client.descriptive_name or f"Account {row.customer_client.id}",
-                        "currency": row.customer_client.currency_code,
-                        "timezone": row.customer_client.time_zone
+                        "customer_id": customer_id,
+                        "account_name": customer_client.get("descriptiveName") or f"Account {customer_id}",
+                        "currency": customer_client.get("currencyCode", ""),
+                        "timezone": customer_client.get("timeZone", "")
                     })
 
                 if accounts:
@@ -254,6 +371,7 @@ class GoogleAdsService:
                     return accounts
                 else:
                     logger.info("No client accounts found, trying single account mode")
+
             except Exception as e:
                 logger.warning(f"Failed to list client accounts: {e}")
 
@@ -269,14 +387,16 @@ class GoogleAdsService:
                     FROM customer
                 """
 
-                own_response = ga_service.search(customer_id=login_customer_id_clean, query=own_account_query)
+                results = self._call_search_stream(login_customer_id_clean, own_account_query)
 
-                for row in own_response:
+                for row in results:
+                    customer = row.get("customer", {})
+                    customer_id = str(customer.get("id", ""))
                     accounts.append({
-                        "customer_id": str(row.customer.id),
-                        "account_name": row.customer.descriptive_name or f"Account {row.customer.id}",
-                        "currency": row.customer.currency_code,
-                        "timezone": row.customer.time_zone
+                        "customer_id": customer_id,
+                        "account_name": customer.get("descriptiveName") or f"Account {customer_id}",
+                        "currency": customer.get("currencyCode", ""),
+                        "timezone": customer.get("timeZone", "")
                     })
 
                 if accounts:
@@ -284,6 +404,7 @@ class GoogleAdsService:
                     return accounts
                 else:
                     logger.warning("No own account found either")
+
             except Exception as e:
                 logger.warning(f"Failed to get own account info: {e}")
 
@@ -304,17 +425,8 @@ class GoogleAdsService:
             List of dicts with id, name, status (only ENABLED and PAUSED campaigns)
         """
         logger.info(f"Listing campaigns for customer {customer_id}")
-        logger.info(f"Login customer ID: {self.client.login_customer_id}")
-        logger.info(f"Developer token: {self.client.developer_token[:10]}...")
 
         try:
-            # Remove hyphens from customer_id if present
-            customer_id_clean = customer_id.replace("-", "")
-            logger.info(f"Cleaned customer ID: {customer_id_clean}")
-
-            ga_service = self.client.get_service("GoogleAdsService")
-            logger.info(f"GoogleAdsService retrieved successfully")
-
             # GAQL query to fetch campaign details
             query = """
                 SELECT
@@ -325,15 +437,15 @@ class GoogleAdsService:
                 WHERE campaign.status IN ('ENABLED', 'PAUSED')
             """
 
-            logger.info(f"Executing search query with customer_id={customer_id_clean}")
-            response = ga_service.search(customer_id=customer_id_clean, query=query)
+            results = self._call_search_stream(customer_id, query)
 
             campaigns = []
-            for row in response:
+            for row in results:
+                campaign = row.get("campaign", {})
                 campaigns.append({
-                    "id": str(row.campaign.id),
-                    "name": row.campaign.name,
-                    "status": row.campaign.status.name
+                    "id": str(campaign.get("id", "")),
+                    "name": campaign.get("name", ""),
+                    "status": campaign.get("status", "UNKNOWN")
                 })
 
             logger.info(f"Found {len(campaigns)} campaigns")
@@ -341,8 +453,6 @@ class GoogleAdsService:
 
         except Exception as e:
             logger.error(f"Failed to list campaigns: {e}", exc_info=True)
-            logger.error(f"Error type: {type(e).__name__}")
-            logger.error(f"Error details: {str(e)}")
             raise
 
     def add_negative_keyword(
@@ -352,51 +462,52 @@ class GoogleAdsService:
         keyword_text: str,
         match_type: str = "EXACT"
     ) -> bool:
-        """Add negative keyword to campaign."""
+        """Add negative keyword to campaign.
+
+        Args:
+            customer_id: Google Ads customer ID
+            campaign_id: Campaign ID
+            keyword_text: Keyword text to add as negative
+            match_type: Match type (EXACT, PHRASE, BROAD)
+
+        Returns:
+            True if successful, False otherwise
+        """
         logger.info(f"Adding negative keyword: {keyword_text} to campaign {campaign_id}")
 
         try:
-            # Remove hyphens from customer_id if present
             customer_id_clean = customer_id.replace("-", "")
 
-            # Get the CampaignCriterionService
-            campaign_criterion_service = self.client.get_service("CampaignCriterionService")
+            # Build campaign resource name
+            campaign_resource = f"customers/{customer_id_clean}/campaigns/{campaign_id}"
 
-            # Create campaign criterion operation
-            campaign_criterion_operation = self.client.get_type("CampaignCriterionOperation")
-            campaign_criterion = campaign_criterion_operation.create
+            # Build criterion operation
+            operation = {
+                "create": {
+                    "campaign": campaign_resource,
+                    "negative": True,
+                    "keyword": {
+                        "text": keyword_text,
+                        "matchType": match_type.upper()
+                    }
+                }
+            }
 
-            # Set campaign resource name
-            campaign_criterion.campaign = self.client.get_service("CampaignService").campaign_path(
-                customer_id_clean, campaign_id
-            )
+            # Call mutate API
+            endpoint = f"{self.BASE_URL}/customers/{customer_id_clean}/campaignCriteria:mutate"
+            headers = self._build_headers()
+            payload = {"operations": [operation]}
 
-            # Mark as negative criterion
-            campaign_criterion.negative = True
+            response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
 
-            # Set keyword criterion
-            campaign_criterion.keyword.text = keyword_text
-
-            # Map match type string to enum
-            keyword_match_type_enum = self.client.enums.KeywordMatchTypeEnum
-            if match_type.upper() == "EXACT":
-                campaign_criterion.keyword.match_type = keyword_match_type_enum.EXACT
-            elif match_type.upper() == "PHRASE":
-                campaign_criterion.keyword.match_type = keyword_match_type_enum.PHRASE
-            elif match_type.upper() == "BROAD":
-                campaign_criterion.keyword.match_type = keyword_match_type_enum.BROAD
+            if response.status_code == 200:
+                result = response.json()
+                resource_name = result.get("results", [{}])[0].get("resourceName", "")
+                logger.info(f"Successfully added negative keyword. Resource: {resource_name}")
+                return True
             else:
-                logger.warning(f"Unknown match type '{match_type}', defaulting to EXACT")
-                campaign_criterion.keyword.match_type = keyword_match_type_enum.EXACT
-
-            # Execute the mutate request
-            response = campaign_criterion_service.mutate_campaign_criteria(
-                customer_id=customer_id_clean,
-                operations=[campaign_criterion_operation]
-            )
-
-            logger.info(f"Successfully added negative keyword. Resource name: {response.results[0].resource_name}")
-            return True
+                logger.error(f"Failed to add negative keyword ({response.status_code}): {response.text}")
+                return False
 
         except Exception as e:
             logger.error(f"Failed to add negative keyword '{keyword_text}': {e}")
