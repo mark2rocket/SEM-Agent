@@ -713,6 +713,7 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
         or payload.get("container", {}).get("channel_id")
         or ""
     )
+    response_url = payload.get("response_url", "")
     actions = payload.get("actions", [])
 
     if not actions:
@@ -808,6 +809,21 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
         # channel_id가 없으면 tenant의 저장된 채널 사용
         report_channel_id = channel_id or tenant.slack_channel_id or ""
 
+        msg = (
+            f"📊 리포트를 생성 중입니다... (선택된 캠페인 {len(selected_campaign_ids)}개)"
+            if selected_campaign_ids
+            else "📊 리포트를 생성 중입니다... (모든 캠페인 포함)"
+        )
+
+        # response_url로 ephemeral 메시지 교체 (replace_original은 response_url을 통해서만 동작)
+        if response_url:
+            import requests as http_requests
+            http_requests.post(
+                response_url,
+                json={"text": msg, "replace_original": True},
+                timeout=5
+            )
+
         try:
             import asyncio
             task = asyncio.create_task(
@@ -820,21 +836,17 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
 
-            msg = (
-                f"📊 리포트를 생성 중입니다... (선택된 캠페인 {len(selected_campaign_ids)}개)"
-                if selected_campaign_ids
-                else "📊 리포트를 생성 중입니다... (모든 캠페인 포함)"
-            )
-            return {
-                "text": msg,
-                "replace_original": True
-            }
+            return {"ok": True}
         except Exception as e:
             logger.error(f"Error generating report: {str(e)}", exc_info=True)
-            return {
-                "text": f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}",
-                "replace_original": True
-            }
+            if response_url:
+                import requests as http_requests
+                http_requests.post(
+                    response_url,
+                    json={"text": f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}", "replace_original": True},
+                    timeout=5
+                )
+            return {"ok": True}
 
     elif action_id == "approve_keyword":
         # Get approval_request_id from action value
