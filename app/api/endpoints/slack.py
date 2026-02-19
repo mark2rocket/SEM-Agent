@@ -805,29 +805,35 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
             schedule.campaign_ids.split(',') if schedule and schedule.campaign_ids else []
         )
 
+        # channel_id가 없으면 tenant의 저장된 채널 사용
+        report_channel_id = channel_id or tenant.slack_channel_id or ""
+
         try:
             import asyncio
             task = asyncio.create_task(
                 _generate_report_async(
                     tenant_id=tenant.id,
-                    channel_id=channel_id,
+                    channel_id=report_channel_id,
                     selected_campaign_ids=selected_campaign_ids
                 )
             )
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
 
+            msg = (
+                f"📊 리포트를 생성 중입니다... (선택된 캠페인 {len(selected_campaign_ids)}개)"
+                if selected_campaign_ids
+                else "📊 리포트를 생성 중입니다... (모든 캠페인 포함)"
+            )
             return {
-                "text": f"📊 리포트를 생성 중입니다...\n선택된 캠페인: {len(selected_campaign_ids)}개" if selected_campaign_ids else "📊 리포트를 생성 중입니다... (모든 캠페인 포함)",
-                "replace_original": True,
-                "response_type": "in_channel"
+                "text": msg,
+                "replace_original": True
             }
         except Exception as e:
             logger.error(f"Error generating report: {str(e)}", exc_info=True)
             return {
                 "text": f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}",
-                "replace_original": True,
-                "response_type": "ephemeral"
+                "replace_original": True
             }
 
     elif action_id == "approve_keyword":
