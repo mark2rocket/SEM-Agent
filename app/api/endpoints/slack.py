@@ -619,7 +619,8 @@ async def handle_report_command(db: Session, channel_id: str):
 async def _generate_report_async(
     tenant_id: int,
     channel_id: str,
-    selected_campaign_ids: list[str] = None
+    selected_campaign_ids: list[str] = None,
+    response_url: str = None
 ):
     """Generate report asynchronously with proper error handling.
 
@@ -656,6 +657,18 @@ async def _generate_report_async(
             return
 
         notify_channel = channel_id or tenant.slack_channel_id
+
+        # response_url로 "생성 중" 메시지 전송 (백그라운드에서 처리)
+        if response_url:
+            import requests as http_requests
+            try:
+                http_requests.post(
+                    response_url,
+                    json={"text": "📊 리포트를 생성 중입니다...", "replace_original": True},
+                    timeout=5
+                )
+            except Exception as e:
+                logger.warning(f"[Report] Failed to update response_url: {e}")
 
         # Initialize services with fresh instances
         logger.info(f"[Report] Step 1: Initializing services for tenant {tenant_id}")
@@ -824,44 +837,20 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
         # channel_id가 없으면 tenant의 저장된 채널 사용
         report_channel_id = channel_id or tenant.slack_channel_id or ""
 
-        msg = (
-            f"📊 리포트를 생성 중입니다... (선택된 캠페인 {len(selected_campaign_ids)}개)"
-            if selected_campaign_ids
-            else "📊 리포트를 생성 중입니다... (모든 캠페인 포함)"
+        # response_url과 리포트 생성을 모두 백그라운드에서 처리 → 즉시 {"ok": True} 반환
+        import asyncio
+        task = asyncio.create_task(
+            _generate_report_async(
+                tenant_id=tenant.id,
+                channel_id=report_channel_id,
+                selected_campaign_ids=selected_campaign_ids,
+                response_url=response_url
+            )
         )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
-        # response_url로 ephemeral 메시지 교체 (replace_original은 response_url을 통해서만 동작)
-        if response_url:
-            import requests as http_requests
-            http_requests.post(
-                response_url,
-                json={"text": msg, "replace_original": True},
-                timeout=5
-            )
-
-        try:
-            import asyncio
-            task = asyncio.create_task(
-                _generate_report_async(
-                    tenant_id=tenant.id,
-                    channel_id=report_channel_id,
-                    selected_campaign_ids=selected_campaign_ids
-                )
-            )
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-
-            return {"ok": True}
-        except Exception as e:
-            logger.error(f"Error generating report: {str(e)}", exc_info=True)
-            if response_url:
-                import requests as http_requests
-                http_requests.post(
-                    response_url,
-                    json={"text": f"❌ 리포트 생성 중 오류가 발생했습니다: {str(e)}", "replace_original": True},
-                    timeout=5
-                )
-            return {"ok": True}
+        return {"ok": True}
 
     elif action_id == "approve_keyword":
         # Get approval_request_id from action value
