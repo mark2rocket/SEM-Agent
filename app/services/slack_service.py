@@ -120,11 +120,15 @@ class SlackService:
                 json={"chart": json.dumps(chart_config), "width": 600, "height": 280, "backgroundColor": "white"},
                 timeout=10
             )
+            logger.info(f"QuickChart create API status: {resp.status_code}")
             if resp.status_code == 200:
                 result = resp.json()
+                logger.info(f"QuickChart create API result: {result}")
                 if result.get("success"):
-                    return result["url"]
-                logger.warning(f"QuickChart create API returned: {result}")
+                    chart_url = result["url"]
+                    logger.info(f"QuickChart URL: {chart_url}")
+                    return chart_url
+                logger.warning(f"QuickChart create API returned no success: {result}")
             else:
                 logger.warning(f"QuickChart create API HTTP {resp.status_code}: {resp.text[:200]}")
         except Exception as e:

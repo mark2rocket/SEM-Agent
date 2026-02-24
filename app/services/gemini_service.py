@@ -30,7 +30,7 @@ class RateLimiter:
 class GeminiService:
     """Service for Gemini AI integration."""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash-latest"):
+    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash"):
         """Initialize GeminiService with v1 API compatible model.
 
         Args:
