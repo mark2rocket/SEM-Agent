@@ -114,9 +114,13 @@ class GeminiService:
 """
         try:
             response = self.model.generate_content(prompt)
-            return response.text
+            text = response.text
+            if not text or not text.strip():
+                logger.warning("Gemini returned empty response")
+                return "성과 데이터를 분석했습니다."
+            return text.strip()
         except Exception as e:
-            logger.error(f"Gemini API error: {e}")
+            logger.error(f"Gemini API error: {e}", exc_info=True)
             return "성과 데이터를 분석했습니다."
 
     async def generate_text(self, prompt: str, temperature: float = 0.7) -> str:

@@ -38,9 +38,12 @@ class SlackService:
             raise
 
     def _build_trend_chart_url(self, trend_data: list) -> str:
-        """Build QuickChart.io URL for 4-week trend chart (CPA, CPC, 전환수)."""
+        """Build QuickChart.io short URL for 4-week trend chart (CPA, CPC, 전환수).
+
+        Uses QuickChart create API to generate a short URL that Slack can render.
+        """
         import json
-        import urllib.parse
+        import requests as http_requests
 
         labels = [d["period"] for d in trend_data]
         cpa_data = [round(d["metrics"].get("cpa", 0)) for d in trend_data]
@@ -54,7 +57,7 @@ class SlackService:
                 "datasets": [
                     {
                         "type": "line",
-                        "label": "CPA (₩)",
+                        "label": "CPA",
                         "data": cpa_data,
                         "borderColor": "#E53E3E",
                         "backgroundColor": "rgba(0,0,0,0)",
@@ -65,7 +68,7 @@ class SlackService:
                     },
                     {
                         "type": "line",
-                        "label": "CPC (₩)",
+                        "label": "CPC",
                         "data": cpc_data,
                         "borderColor": "#3182CE",
                         "backgroundColor": "rgba(0,0,0,0)",
@@ -76,7 +79,7 @@ class SlackService:
                     },
                     {
                         "type": "bar",
-                        "label": "전환수",
+                        "label": "Conv",
                         "data": conversions_data,
                         "backgroundColor": "rgba(56,161,105,0.6)",
                         "yAxisID": "y1"
@@ -87,7 +90,7 @@ class SlackService:
                 "plugins": {
                     "title": {
                         "display": True,
-                        "text": "4주 트렌드 — CPA · CPC · 전환수",
+                        "text": "4-Week Trend: CPA / CPC / Conversions",
                         "font": {"size": 14}
                     },
                     "legend": {"position": "bottom"}
@@ -96,13 +99,13 @@ class SlackService:
                     "y": {
                         "type": "linear",
                         "position": "left",
-                        "title": {"display": True, "text": "단가 (₩)"},
+                        "title": {"display": True, "text": "Cost (KRW)"},
                         "grid": {"color": "rgba(0,0,0,0.05)"}
                     },
                     "y1": {
                         "type": "linear",
                         "position": "right",
-                        "title": {"display": True, "text": "전환수"},
+                        "title": {"display": True, "text": "Conversions"},
                         "grid": {"drawOnChartArea": False},
                         "ticks": {"stepSize": 1}
                     }
@@ -110,8 +113,24 @@ class SlackService:
             }
         }
 
-        encoded = urllib.parse.quote(json.dumps(chart_config, ensure_ascii=False))
-        return f"https://quickchart.io/chart?c={encoded}&w=600&h=280&bkg=white"
+        # QuickChart create API → 단축 URL 반환 (Slack image block 렌더링 호환)
+        try:
+            resp = http_requests.post(
+                "https://quickchart.io/chart/create",
+                json={"chart": json.dumps(chart_config), "width": 600, "height": 280, "backgroundColor": "white"},
+                timeout=10
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                if result.get("success"):
+                    return result["url"]
+                logger.warning(f"QuickChart create API returned: {result}")
+            else:
+                logger.warning(f"QuickChart create API HTTP {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logger.error(f"QuickChart create API error: {e}", exc_info=True)
+
+        return ""
 
     def build_weekly_report_message(
         self,
@@ -165,17 +184,18 @@ class SlackService:
         # 4주 트렌드 차트 (데이터가 2주 이상일 때만)
         if trend_data and len(trend_data) >= 2:
             chart_url = self._build_trend_chart_url(trend_data)
-            blocks += [
-                {
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": "*📈 4주 트렌드*"}
-                },
-                {
-                    "type": "image",
-                    "image_url": chart_url,
-                    "alt_text": "4주 트렌드 차트 (CPA, CPC, 전환수)"
-                }
-            ]
+            if chart_url:
+                blocks += [
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": "*📈 4주 트렌드*"}
+                    },
+                    {
+                        "type": "image",
+                        "image_url": chart_url,
+                        "alt_text": "4주 트렌드 차트 (CPA, CPC, 전환수)"
+                    }
+                ]
 
         blocks += [
             {"type": "divider"},
