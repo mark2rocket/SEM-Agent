@@ -1,7 +1,7 @@
 """Configuration management using Pydantic Settings."""
 
 from typing import Optional
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -46,7 +46,10 @@ class Settings(BaseSettings):
 
     # Gemini AI
     gemini_api_key: str = Field(...)
-    gemini_default_model: str = Field(default="gemini-1.5-flash")
+    gemini_default_model: str = Field(
+        default="gemini-2.0-flash",
+        validation_alias=AliasChoices("gemini_default_model", "gemini_model")
+    )
     gemini_pro_model: str = Field(default="gemini-1.5-pro")
     gemini_flash_rpm: int = Field(default=60)
     gemini_pro_rpm: int = Field(default=10)

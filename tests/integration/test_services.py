@@ -71,36 +71,41 @@ class TestGeminiService:
 
     def test_gemini_service_initialization(self):
         """Test GeminiService can be initialized."""
-        service = GeminiService(
-            api_key="test_api_key",
-            model_name="gemini-1.5-flash"
-        )
-        assert service.model is not None
-        assert service.rate_limiter is not None
+        with patch("google.genai.Client"):
+            service = GeminiService(
+                api_key="test_api_key",
+                model_name="gemini-2.0-flash"
+            )
+            assert service.client is not None
+            assert service.model_name == "gemini-2.0-flash"
+            assert service.rate_limiter is not None
 
-    @patch('app.services.gemini_service.genai.GenerativeModel')
-    def test_generate_report_insight(self, mock_model):
+    def test_generate_report_insight(self):
         """Test generating report insight."""
-        # Mock Gemini API response
-        mock_response = Mock()
-        mock_response.text = "전반적으로 성과가 개선되었습니다."
-        mock_model_instance = Mock()
-        mock_model_instance.generate_content.return_value = mock_response
-        mock_model.return_value = mock_model_instance
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = Mock()
+            mock_client_cls.return_value = mock_client
 
-        service = GeminiService(api_key="test_key")
-        service.model = mock_model_instance
+            mock_response = Mock()
+            mock_response.text = "전반적으로 성과가 개선되었습니다."
+            mock_client.models.generate_content.return_value = mock_response
 
-        metrics = {
-            "cost": 1000000,
-            "conversions": 50,
-            "roas": 350
-        }
+            service = GeminiService(api_key="test_key")
 
-        insight = service.generate_report_insight(metrics)
+            metrics = {
+                "cost": 1000000,
+                "impressions": 10000,
+                "clicks": 500,
+                "conversions": 50,
+                "cpc": 2000,
+                "cpa": 20000
+            }
 
-        assert isinstance(insight, str)
-        assert len(insight) > 0
+            insight = service.generate_report_insight(metrics)
+
+            assert isinstance(insight, str)
+            assert len(insight) > 0
+            assert insight == "전반적으로 성과가 개선되었습니다."
 
 
 """Tests for service layer - Updated for REST API implementation."""

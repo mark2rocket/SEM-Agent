@@ -1,6 +1,6 @@
 """Gemini AI service for generating insights."""
 
-import google.generativeai as genai
+from google import genai
 from typing import Dict, Optional
 import logging
 import time
@@ -30,19 +30,19 @@ class RateLimiter:
 class GeminiService:
     """Service for Gemini AI integration."""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash"):
-        """Initialize GeminiService with v1 API compatible model.
+    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash"):
+        """Initialize GeminiService with google-genai SDK.
 
         Args:
             api_key: Google API key for Gemini
-            model_name: Model to use (default: gemini-1.5-flash-latest for v1 API)
+            model_name: Model to use (default: gemini-2.0-flash)
         """
         try:
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(model_name)
+            self.client = genai.Client(api_key=api_key)
+            self.model_name = model_name
             logger.info(f"GeminiService initialized with model: {model_name}")
         except Exception as e:
-            logger.error(f"Failed to initialize Gemini model {model_name}: {e}")
+            logger.error(f"Failed to initialize Gemini client {model_name}: {e}")
             raise
 
         rpm = 60 if "flash" in model_name else 10
@@ -113,7 +113,10 @@ class GeminiService:
 - "분석했습니다" 같은 무의미한 마무리 금지
 """
         try:
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt
+            )
             text = response.text
             if not text or not text.strip():
                 logger.warning("Gemini returned empty response")
@@ -131,7 +134,10 @@ class GeminiService:
 
         try:
             self.rate_limiter.add_request()
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt
+            )
             return response.text
         except Exception as e:
             logger.error(f"Gemini API error: {e}")

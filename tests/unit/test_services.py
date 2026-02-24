@@ -1,10 +1,12 @@
 """Unit tests for service modules."""
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch, MagicMock
 from datetime import date, timedelta
 
 from app.services.keyword_service import KeywordService
 from app.services.report_service import ReportService
+from app.services.gemini_service import GeminiService, RateLimiter
+from app.services.slack_service import SlackService
 
 
 class TestKeywordService:
@@ -218,3 +220,334 @@ class TestReportService:
         # Both dates should be in the past
         assert monday < today
         assert sunday < today
+
+
+class TestRateLimiter:
+    """Test RateLimiter."""
+
+    def test_can_proceed_when_under_limit(self):
+        limiter = RateLimiter(max_requests=5)
+        assert limiter.can_proceed() is True
+
+    def test_blocked_when_limit_exceeded(self):
+        limiter = RateLimiter(max_requests=2)
+        limiter.add_request()
+        limiter.add_request()
+        assert limiter.can_proceed() is False
+
+    def test_allows_after_window_expires(self):
+        import time
+        limiter = RateLimiter(max_requests=1, time_window=1)
+        limiter.requests.append(time.time() - 2)  # expired request
+        assert limiter.can_proceed() is True
+
+
+class TestGeminiService:
+    """Test GeminiService with mocked google-genai SDK."""
+
+    def _make_service(self, mock_client_cls):
+        """Helper: create GeminiService with mocked Client."""
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        service = GeminiService(api_key="test-key", model_name="gemini-2.0-flash")
+        return service, mock_client
+
+    def test_initialization(self):
+        with patch("google.genai.Client") as mock_client_cls:
+            service, _ = self._make_service(mock_client_cls)
+            mock_client_cls.assert_called_once_with(api_key="test-key")
+            assert service.model_name == "gemini-2.0-flash"
+
+    def test_flash_model_sets_high_rpm(self):
+        with patch("google.genai.Client"):
+            service = GeminiService(api_key="test-key", model_name="gemini-2.0-flash")
+            assert service.rate_limiter.max_requests == 60
+
+    def test_pro_model_sets_low_rpm(self):
+        with patch("google.genai.Client"):
+            service = GeminiService(api_key="test-key", model_name="gemini-1.5-pro")
+            assert service.rate_limiter.max_requests == 10
+
+    def test_generate_report_insight_success(self):
+        with patch("google.genai.Client") as mock_client_cls:
+            service, mock_client = self._make_service(mock_client_cls)
+
+            mock_response = MagicMock()
+            mock_response.text = "이번 주 광고 성과가 우수합니다. CPA가 10% 개선되었습니다. 다음 주에는 전환율 높은 키워드 입찰가를 높이세요."
+            mock_client.models.generate_content.return_value = mock_response
+
+            metrics = {
+                "cost": 1000000, "impressions": 10000,
+                "clicks": 500, "conversions": 10,
+                "cpc": 2000, "cpa": 100000
+            }
+            result = service.generate_report_insight(metrics=metrics)
+
+            assert result == "이번 주 광고 성과가 우수합니다. CPA가 10% 개선되었습니다. 다음 주에는 전환율 높은 키워드 입찰가를 높이세요."
+            mock_client.models.generate_content.assert_called_once()
+            call_kwargs = mock_client.models.generate_content.call_args
+            assert call_kwargs.kwargs["model"] == "gemini-2.0-flash"
+            assert "₩1,000,000" in call_kwargs.kwargs["contents"]
+
+    def test_generate_report_insight_with_trend_data(self):
+        with patch("google.genai.Client") as mock_client_cls:
+            service, mock_client = self._make_service(mock_client_cls)
+
+            mock_response = MagicMock()
+            mock_response.text = "4주 트렌드 기반 분석입니다."
+            mock_client.models.generate_content.return_value = mock_response
+
+            metrics = {"cost": 500000, "impressions": 5000, "clicks": 250, "conversions": 5, "cpc": 2000, "cpa": 100000}
+            trend_data = [
+                {"period": "01/01~01/07", "metrics": {"cpc": 2200, "conversions": 4, "cpa": 110000}},
+                {"period": "01/08~01/14", "metrics": {"cpc": 2100, "conversions": 5, "cpa": 100000}},
+            ]
+            result = service.generate_report_insight(metrics=metrics, trend_data=trend_data)
+
+            assert result == "4주 트렌드 기반 분석입니다."
+            prompt_content = mock_client.models.generate_content.call_args.kwargs["contents"]
+            assert "4주 트렌드" in prompt_content
+            assert "01/01~01/07" in prompt_content
+
+    def test_generate_report_insight_api_error_returns_fallback(self):
+        with patch("google.genai.Client") as mock_client_cls:
+            service, mock_client = self._make_service(mock_client_cls)
+            mock_client.models.generate_content.side_effect = Exception("403 API key reported as leaked")
+
+            metrics = {"cost": 1000000, "impressions": 10000, "clicks": 500, "conversions": 10, "cpc": 2000, "cpa": 100000}
+            result = service.generate_report_insight(metrics=metrics)
+
+            assert result == "성과 데이터를 분석했습니다."
+
+    def test_generate_report_insight_empty_response_returns_fallback(self):
+        with patch("google.genai.Client") as mock_client_cls:
+            service, mock_client = self._make_service(mock_client_cls)
+
+            mock_response = MagicMock()
+            mock_response.text = "   "
+            mock_client.models.generate_content.return_value = mock_response
+
+            metrics = {"cost": 0, "impressions": 0, "clicks": 0, "conversions": 0, "cpc": 0, "cpa": 0}
+            result = service.generate_report_insight(metrics=metrics)
+
+            assert result == "성과 데이터를 분석했습니다."
+
+    def test_generate_report_insight_no_roas_in_prompt(self):
+        """ROAS는 B2B 계정에서 사용 금지 - 프롬프트에 ROAS 없어야 함."""
+        with patch("google.genai.Client") as mock_client_cls:
+            service, mock_client = self._make_service(mock_client_cls)
+
+            mock_response = MagicMock()
+            mock_response.text = "정상 응답"
+            mock_client.models.generate_content.return_value = mock_response
+
+            metrics = {"cost": 1000000, "impressions": 10000, "clicks": 500, "conversions": 10, "cpc": 2000, "cpa": 100000}
+            service.generate_report_insight(metrics=metrics)
+
+            prompt_content = mock_client.models.generate_content.call_args.kwargs["contents"]
+            assert "ROAS" in prompt_content  # 금지 규칙으로 언급되어야 함
+            assert "절대 언급하지 말 것" in prompt_content
+
+
+class TestSlackService:
+    """Test SlackService Block Kit message builders."""
+
+    def _make_service(self):
+        with patch("slack_sdk.WebClient"):
+            return SlackService(bot_token="xoxb-test-token")
+
+    def test_build_weekly_report_message_returns_blocks(self):
+        service = self._make_service()
+        metrics = {
+            "cost": 1000000, "impressions": 10000,
+            "clicks": 500, "conversions": 10,
+            "cpc": 2000, "cpa": 100000
+        }
+        result = service.build_weekly_report_message(
+            metrics=metrics,
+            insight="좋은 성과입니다.",
+            period="2024-01-01 ~ 2024-01-07"
+        )
+        assert "blocks" in result
+        blocks = result["blocks"]
+        assert len(blocks) > 0
+        # 헤더 블록 확인
+        assert blocks[0]["type"] == "header"
+        assert "주간 광고 리포트" in blocks[0]["text"]["text"]
+
+    def test_build_weekly_report_message_contains_all_metrics(self):
+        service = self._make_service()
+        metrics = {
+            "cost": 1500000, "impressions": 20000,
+            "clicks": 800, "conversions": 15,
+            "cpc": 1875, "cpa": 100000
+        }
+        result = service.build_weekly_report_message(
+            metrics=metrics,
+            insight="테스트 인사이트",
+            period="2024-01-01 ~ 2024-01-07"
+        )
+        blocks_text = str(result)
+        assert "₩1,500,000" in blocks_text   # 비용
+        assert "20,000" in blocks_text         # 노출
+        assert "800" in blocks_text            # 클릭
+        assert "15" in blocks_text             # 전환
+        assert "₩1,875" in blocks_text         # CPC
+        assert "₩100,000" in blocks_text       # CPA
+
+    def test_build_weekly_report_message_contains_insight(self):
+        service = self._make_service()
+        metrics = {"cost": 0, "impressions": 0, "clicks": 0, "conversions": 0, "cpc": 0, "cpa": 0}
+        result = service.build_weekly_report_message(
+            metrics=metrics,
+            insight="이번 주는 전환이 없어 키워드 점검이 필요합니다.",
+            period="2024-01-01 ~ 2024-01-07"
+        )
+        blocks_text = str(result)
+        assert "이번 주는 전환이 없어 키워드 점검이 필요합니다." in blocks_text
+
+    def test_build_weekly_report_message_with_change_indicators(self):
+        service = self._make_service()
+        metrics = {
+            "cost": 1000000, "cost_change": "🔺 5.0%",
+            "impressions": 10000, "impressions_change": "🔻 3.0%",
+            "clicks": 500, "clicks_change": "➡️ 0.0%",
+            "conversions": 10, "conversions_change": "🔺 10.0%",
+            "cpc": 2000, "cpc_change": "🔻 2.0%",
+            "cpa": 100000, "cpa_change": "🔻 8.0%"
+        }
+        result = service.build_weekly_report_message(
+            metrics=metrics,
+            insight="전환 증가 추세입니다.",
+            period="2024-01-01 ~ 2024-01-07"
+        )
+        blocks_text = str(result)
+        assert "🔺 5.0%" in blocks_text
+
+    def test_build_weekly_report_no_chart_when_insufficient_trend(self):
+        """트렌드 데이터가 1개 이하면 차트 블록 없음."""
+        service = self._make_service()
+        metrics = {"cost": 1000000, "impressions": 10000, "clicks": 500, "conversions": 10, "cpc": 2000, "cpa": 100000}
+        trend_data = [{"period": "01/01~01/07", "metrics": metrics}]  # 1개만
+        result = service.build_weekly_report_message(
+            metrics=metrics,
+            insight="테스트",
+            period="2024-01-01 ~ 2024-01-07",
+            trend_data=trend_data
+        )
+        # image 블록이 없어야 함
+        image_blocks = [b for b in result["blocks"] if b.get("type") == "image"]
+        assert len(image_blocks) == 0
+
+    def test_build_trend_chart_url_success(self):
+        """QuickChart POST create API 성공 시 URL 반환."""
+        service = self._make_service()
+        trend_data = [
+            {"period": "01/01~01/07", "metrics": {"cpa": 100000, "cpc": 2000, "conversions": 5}},
+            {"period": "01/08~01/14", "metrics": {"cpa": 95000, "cpc": 1900, "conversions": 7}},
+        ]
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"success": True, "url": "https://quickchart.io/chart/render/zf-abc123"}
+
+        with patch("requests.post", return_value=mock_resp) as mock_post:
+            url = service._build_trend_chart_url(trend_data)
+
+        assert url == "https://quickchart.io/chart/render/zf-abc123"
+        mock_post.assert_called_once()
+        call_args = mock_post.call_args
+        assert call_args.args[0] == "https://quickchart.io/chart/create"
+
+    def test_build_trend_chart_url_api_failure_returns_empty(self):
+        """QuickChart API 실패 시 빈 문자열 반환."""
+        service = self._make_service()
+        trend_data = [
+            {"period": "01/01~01/07", "metrics": {"cpa": 100000, "cpc": 2000, "conversions": 5}},
+            {"period": "01/08~01/14", "metrics": {"cpa": 95000, "cpc": 1900, "conversions": 7}},
+        ]
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Internal Server Error"
+
+        with patch("requests.post", return_value=mock_resp):
+            url = service._build_trend_chart_url(trend_data)
+
+        assert url == ""
+
+    def test_build_trend_chart_url_network_error_returns_empty(self):
+        """네트워크 오류 시 빈 문자열 반환."""
+        service = self._make_service()
+        trend_data = [
+            {"period": "01/01~01/07", "metrics": {"cpa": 100000, "cpc": 2000, "conversions": 5}},
+            {"period": "01/08~01/14", "metrics": {"cpa": 95000, "cpc": 1900, "conversions": 7}},
+        ]
+
+        with patch("requests.post", side_effect=Exception("Connection timeout")):
+            url = service._build_trend_chart_url(trend_data)
+
+        assert url == ""
+
+    def test_build_weekly_report_with_chart_url(self):
+        """차트 URL이 있으면 image 블록 추가됨."""
+        service = self._make_service()
+        metrics = {"cost": 1000000, "impressions": 10000, "clicks": 500, "conversions": 10, "cpc": 2000, "cpa": 100000}
+        trend_data = [
+            {"period": "01/01~01/07", "metrics": {"cpa": 100000, "cpc": 2000, "conversions": 5}},
+            {"period": "01/08~01/14", "metrics": {"cpa": 95000, "cpc": 1900, "conversions": 7}},
+        ]
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"success": True, "url": "https://quickchart.io/chart/render/zf-abc123"}
+
+        with patch("requests.post", return_value=mock_resp):
+            result = service.build_weekly_report_message(
+                metrics=metrics,
+                insight="테스트 인사이트",
+                period="2024-01-01 ~ 2024-01-07",
+                trend_data=trend_data
+            )
+
+        image_blocks = [b for b in result["blocks"] if b.get("type") == "image"]
+        assert len(image_blocks) == 1
+        assert image_blocks[0]["image_url"] == "https://quickchart.io/chart/render/zf-abc123"
+
+    def test_build_keyword_alert_message_structure(self):
+        service = self._make_service()
+        keyword_data = {
+            "search_term": "무료 광고",
+            "campaign_name": "브랜드 캠페인",
+            "cost": 50000,
+            "clicks": 25,
+            "conversions": 0
+        }
+        result = service.build_keyword_alert_message(keyword_data, approval_request_id=42)
+        blocks = result["blocks"]
+
+        # 헤더 확인
+        assert blocks[0]["type"] == "header"
+        assert "비효율 검색어" in blocks[0]["text"]["text"]
+
+        # 데이터 섹션 확인
+        section_text = str(blocks[1])
+        assert "무료 광고" in section_text
+        assert "브랜드 캠페인" in section_text
+
+        # 버튼 확인
+        action_block = blocks[2]
+        assert action_block["type"] == "actions"
+        assert action_block["elements"][0]["value"] == "42"
+        assert action_block["elements"][1]["value"] == "42"
+
+    def test_build_keyword_alert_message_zero_approval_id(self):
+        """approval_request_id 없을 때 "0" 기본값."""
+        service = self._make_service()
+        keyword_data = {
+            "search_term": "테스트", "campaign_name": "캠페인",
+            "cost": 1000, "clicks": 5, "conversions": 0
+        }
+        result = service.build_keyword_alert_message(keyword_data)
+        action_block = result["blocks"][2]
+        assert action_block["elements"][0]["value"] == "0"
