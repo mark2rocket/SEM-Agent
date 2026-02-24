@@ -7,8 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models import (
     Base, Tenant, User, OAuthToken, OAuthProvider,
-    GoogleAdsAccount, PerformanceThreshold,
-    ReportSchedule, ReportHistory, ReportFrequency,
+    GoogleAdsAccount, ReportSchedule, ReportFrequency,
     KeywordCandidate, ApprovalRequest, KeywordStatus
 )
 

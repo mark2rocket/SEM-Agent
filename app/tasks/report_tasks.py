@@ -1,10 +1,9 @@
 """Celery tasks for report generation."""
 
 from celery import shared_task
-from datetime import datetime, time
+from datetime import datetime
 import logging
 import pytz
-from sqlalchemy.orm import Session
 
 from ..core.database import SessionLocal
 from ..models.report import ReportSchedule, ReportFrequency
@@ -30,7 +29,7 @@ def generate_scheduled_reports():
 
         # Query all active schedules
         schedules = db.query(ReportSchedule).filter(
-            ReportSchedule.is_active == True
+            ReportSchedule.is_active
         ).all()
 
         logger.info(f"Found {len(schedules)} active schedules")

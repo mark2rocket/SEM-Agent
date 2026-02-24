@@ -4,10 +4,9 @@ from celery import shared_task
 from datetime import datetime
 import logging
 
-from sqlalchemy.orm import Session
 from ..core.database import SessionLocal
 from ..models.tenant import Tenant
-from ..models.keyword import ApprovalRequest, KeywordCandidate, KeywordStatus, ApprovalAction
+from ..models.keyword import ApprovalRequest, KeywordStatus, ApprovalAction
 from ..services.google_ads_service import GoogleAdsService
 from ..services.slack_service import SlackService
 from ..services.keyword_service import KeywordService
@@ -24,7 +23,7 @@ def detect_inefficient_keywords():
         logger.info("Starting inefficient keyword detection for all tenants...")
 
         # Query all active tenants
-        tenants = db.query(Tenant).filter(Tenant.is_active == True).all()
+        tenants = db.query(Tenant).filter(Tenant.is_active).all()
         logger.info(f"Found {len(tenants)} active tenants")
 
         total_detected = 0
@@ -74,7 +73,7 @@ def detect_inefficient_keywords():
                 for keyword_data in detected_keywords:
                     try:
                         # Create approval request
-                        approval_request_id = keyword_service.create_approval_request(
+                        keyword_service.create_approval_request(
                             tenant_id=tenant.id,
                             keyword_data=keyword_data
                         )
@@ -109,7 +108,7 @@ def check_approval_expirations():
         now = datetime.utcnow()
         expired_requests = db.query(ApprovalRequest).filter(
             ApprovalRequest.expires_at < now,
-            ApprovalRequest.action == None
+            ApprovalRequest.action.is_(None)
         ).all()
 
         expired_count = 0

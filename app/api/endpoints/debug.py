@@ -3,11 +3,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Dict, Any
-from datetime import datetime
 
 from ...api.deps import get_db
 from ...models.tenant import Tenant
-from ...models.oauth import OAuthToken, OAuthProvider
+from ...models.oauth import OAuthToken
 from ...models.google_ads import GoogleAdsAccount
 
 router = APIRouter()

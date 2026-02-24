@@ -4,7 +4,6 @@ from celery import shared_task
 from datetime import datetime, timedelta
 import logging
 
-from sqlalchemy.orm import Session
 from ..core.database import SessionLocal
 from ..models.oauth import OAuthToken, OAuthProvider
 from ..core.security import TokenEncryption

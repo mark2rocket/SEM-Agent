@@ -207,8 +207,9 @@ class GoogleAdsService:
             # Convert micros to actual currency
             cost = total_cost_micros / 1_000_000
 
-            # Calculate ROAS (avoid division by zero)
-            roas = (total_conversion_value / cost * 100) if cost > 0 else 0.0
+            # Calculate derived metrics (avoid division by zero)
+            cpc = (cost / total_clicks) if total_clicks > 0 else 0.0
+            cpa = (cost / total_conversions) if total_conversions > 0 else 0.0
 
             return {
                 "cost": cost,
@@ -216,7 +217,8 @@ class GoogleAdsService:
                 "conversion_value": total_conversion_value,
                 "clicks": total_clicks,
                 "impressions": total_impressions,
-                "roas": roas
+                "cpc": cpc,
+                "cpa": cpa
             }
 
         except Exception as e:

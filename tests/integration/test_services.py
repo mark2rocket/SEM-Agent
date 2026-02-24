@@ -1,8 +1,7 @@
 """Integration tests for services."""
 
-import pytest
-from unittest.mock import Mock, MagicMock, patch
-from datetime import date, datetime, timedelta
+from unittest.mock import Mock, patch
+from datetime import date
 
 from app.services.slack_service import SlackService
 from app.services.gemini_service import GeminiService, RateLimiter
@@ -106,11 +105,8 @@ class TestGeminiService:
 
 """Tests for service layer - Updated for REST API implementation."""
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
-from datetime import date
+from unittest.mock import patch  # noqa: E402
 
-from app.services.google_ads_service import GoogleAdsService
 
 
 class TestGoogleAdsService:

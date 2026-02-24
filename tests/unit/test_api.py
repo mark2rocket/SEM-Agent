@@ -1,11 +1,7 @@
 """Unit tests for API endpoints."""
 
-import pytest
-from fastapi.testclient import TestClient
 from unittest.mock import Mock, patch, AsyncMock
-import json
 
-from app.main import app
 
 
 # Note: client fixture is provided by conftest.py

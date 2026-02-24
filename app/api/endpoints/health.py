@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from redis.asyncio import Redis
 
 from ..deps import get_db
 

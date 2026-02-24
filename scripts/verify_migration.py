@@ -8,9 +8,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from sqlalchemy import create_engine, inspect
-from sqlalchemy.orm import sessionmaker
 from app.config import settings
-from app.models import Base
 
 
 def verify_migration():
@@ -143,7 +141,7 @@ def test_connection():
         with engine.connect() as conn:
             result = conn.execute("SELECT version();")
             version = result.fetchone()[0]
-            print(f"✅ Connected to database")
+            print("✅ Connected to database")
             print(f"Database version: {version}")
             return True
     except Exception as e:

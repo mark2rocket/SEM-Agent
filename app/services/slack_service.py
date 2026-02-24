@@ -2,7 +2,7 @@
 
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from typing import Dict, List
+from typing import Dict
 import logging
 
 logger = logging.getLogger(__name__)
@@ -37,29 +37,102 @@ class SlackService:
             logger.error(f"Slack API error: {e}")
             raise
 
+    def _build_trend_chart_url(self, trend_data: list) -> str:
+        """Build QuickChart.io URL for 4-week trend chart (CPA, CPC, 전환수)."""
+        import json
+        import urllib.parse
+
+        labels = [d["period"] for d in trend_data]
+        cpa_data = [round(d["metrics"].get("cpa", 0)) for d in trend_data]
+        cpc_data = [round(d["metrics"].get("cpc", 0)) for d in trend_data]
+        conversions_data = [int(d["metrics"].get("conversions", 0)) for d in trend_data]
+
+        chart_config = {
+            "type": "bar",
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "type": "line",
+                        "label": "CPA (₩)",
+                        "data": cpa_data,
+                        "borderColor": "#E53E3E",
+                        "backgroundColor": "rgba(0,0,0,0)",
+                        "yAxisID": "y",
+                        "tension": 0.3,
+                        "pointRadius": 5,
+                        "borderWidth": 2
+                    },
+                    {
+                        "type": "line",
+                        "label": "CPC (₩)",
+                        "data": cpc_data,
+                        "borderColor": "#3182CE",
+                        "backgroundColor": "rgba(0,0,0,0)",
+                        "yAxisID": "y",
+                        "tension": 0.3,
+                        "pointRadius": 5,
+                        "borderWidth": 2
+                    },
+                    {
+                        "type": "bar",
+                        "label": "전환수",
+                        "data": conversions_data,
+                        "backgroundColor": "rgba(56,161,105,0.6)",
+                        "yAxisID": "y1"
+                    }
+                ]
+            },
+            "options": {
+                "plugins": {
+                    "title": {
+                        "display": True,
+                        "text": "4주 트렌드 — CPA · CPC · 전환수",
+                        "font": {"size": 14}
+                    },
+                    "legend": {"position": "bottom"}
+                },
+                "scales": {
+                    "y": {
+                        "type": "linear",
+                        "position": "left",
+                        "title": {"display": True, "text": "단가 (₩)"},
+                        "grid": {"color": "rgba(0,0,0,0.05)"}
+                    },
+                    "y1": {
+                        "type": "linear",
+                        "position": "right",
+                        "title": {"display": True, "text": "전환수"},
+                        "grid": {"drawOnChartArea": False},
+                        "ticks": {"stepSize": 1}
+                    }
+                }
+            }
+        }
+
+        encoded = urllib.parse.quote(json.dumps(chart_config, ensure_ascii=False))
+        return f"https://quickchart.io/chart?c={encoded}&w=600&h=280&bkg=white"
+
     def build_weekly_report_message(
         self,
         metrics: Dict,
         insight: str,
-        period: str
+        period: str,
+        trend_data: list = None
     ) -> Dict:
         """Build Block Kit message for weekly report."""
-        # Format metric values with week-over-week changes
-        cost_text = f"*총 비용:*\n₩{metrics['cost']:,.0f}"
-        if "cost_change" in metrics:
-            cost_text += f" {metrics['cost_change']}"
+        def fmt_change(key: str) -> str:
+            return f" {metrics[key]}" if key in metrics else ""
 
-        conversions_text = f"*전환수:*\n{metrics['conversions']:.0f}"
-        if "conversions_change" in metrics:
-            conversions_text += f" {metrics['conversions_change']}"
+        cpa_val = metrics.get("cpa", 0)
+        cpa_display = f"₩{cpa_val:,.0f}" if cpa_val > 0 else "N/A"
 
-        roas_text = f"*ROAS:*\n{metrics['roas']:.0f}%"
-        if "roas_change" in metrics:
-            roas_text += f" {metrics['roas_change']}"
-
-        clicks_text = f"*클릭수:*\n{metrics.get('clicks', 0):,}"
-        if "clicks_change" in metrics:
-            clicks_text += f" {metrics['clicks_change']}"
+        cost_text = f"*비용:*\n₩{metrics['cost']:,.0f}{fmt_change('cost_change')}"
+        impressions_text = f"*노출:*\n{metrics.get('impressions', 0):,}{fmt_change('impressions_change')}"
+        clicks_text = f"*클릭:*\n{metrics.get('clicks', 0):,}{fmt_change('clicks_change')}"
+        conversions_text = f"*전환:*\n{metrics.get('conversions', 0):.0f}{fmt_change('conversions_change')}"
+        cpc_text = f"*CPC:*\n₩{metrics.get('cpc', 0):,.0f}{fmt_change('cpc_change')}"
+        cpa_text = f"*CPA:*\n{cpa_display}{fmt_change('cpa_change')}"
 
         blocks = [
             {
@@ -70,11 +143,41 @@ class SlackService:
                 "type": "section",
                 "fields": [
                     {"type": "mrkdwn", "text": cost_text},
-                    {"type": "mrkdwn", "text": conversions_text},
-                    {"type": "mrkdwn", "text": roas_text},
-                    {"type": "mrkdwn", "text": clicks_text}
+                    {"type": "mrkdwn", "text": impressions_text}
                 ]
             },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": clicks_text},
+                    {"type": "mrkdwn", "text": conversions_text}
+                ]
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": cpc_text},
+                    {"type": "mrkdwn", "text": cpa_text}
+                ]
+            }
+        ]
+
+        # 4주 트렌드 차트 (데이터가 2주 이상일 때만)
+        if trend_data and len(trend_data) >= 2:
+            chart_url = self._build_trend_chart_url(trend_data)
+            blocks += [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*📈 4주 트렌드*"}
+                },
+                {
+                    "type": "image",
+                    "image_url": chart_url,
+                    "alt_text": "4주 트렌드 차트 (CPA, CPC, 전환수)"
+                }
+            ]
+
+        blocks += [
             {"type": "divider"},
             {
                 "type": "section",

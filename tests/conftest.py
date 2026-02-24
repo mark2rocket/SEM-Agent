@@ -5,7 +5,6 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock
 
 # Set test environment variables BEFORE importing app
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
@@ -53,7 +52,6 @@ def client(db):
     # Import app after setting up environment
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
-    from app.config import settings
     from app.core.middleware import TenantContextMiddleware, RequestLoggingMiddleware
     from app.core.exceptions import register_exception_handlers
 

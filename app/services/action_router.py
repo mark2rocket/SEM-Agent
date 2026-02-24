@@ -237,7 +237,6 @@ Format the response in a friendly, conversational way with key metrics highlight
         """Handle keyword suggestion request."""
         try:
             seed_keywords = entities.get('keywords', [])
-            campaign_id = entities.get('campaign_id')
             max_suggestions = entities.get('max_suggestions', 10)
 
             logger.info(f"Suggesting keywords for tenant {tenant_id}: seeds={seed_keywords}")

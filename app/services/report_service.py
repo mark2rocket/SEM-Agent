@@ -48,45 +48,41 @@ class ReportService:
                 selected_campaign_ids = schedule.campaign_ids.split(',')
                 logger.info(f"Filtering report by {len(selected_campaign_ids)} selected campaigns")
 
-            # Get last week's date range
-            period_start, period_end = self.get_weekly_period()
-            logger.info(f"Report period: {period_start} to {period_end}")
+            # Fetch 4 weeks of metrics for trend analysis (oldest first)
+            week_periods = self.get_n_week_periods(4)
+            trend_data = []
+            for w_start, w_end in week_periods:
+                w_metrics = self.google_ads.get_performance_metrics(
+                    customer_id=account.customer_id,
+                    date_from=w_start,
+                    date_to=w_end,
+                    campaign_ids=selected_campaign_ids
+                )
+                if w_metrics and w_metrics.get("status") != "error":
+                    trend_data.append({
+                        "period": f"{w_start.strftime('%m/%d')}~{w_end.strftime('%m/%d')}",
+                        "metrics": w_metrics
+                    })
 
-            # Fetch performance metrics from Google Ads
-            metrics_data = self.google_ads.get_performance_metrics(
-                customer_id=account.customer_id,
-                date_from=period_start,
-                date_to=period_end,
-                campaign_ids=selected_campaign_ids
-            )
-
-            if not metrics_data or metrics_data.get("status") == "error":
-                logger.error(f"Failed to fetch metrics: {metrics_data}")
+            if not trend_data:
+                logger.error("Failed to fetch metrics for any week")
                 return {"status": "error", "message": "Failed to fetch Google Ads metrics"}
 
-            # Calculate previous period dates
-            period_days = (period_end - period_start).days + 1
-            prev_start = period_start - timedelta(days=period_days)
-            prev_end = period_start - timedelta(days=1)
-            logger.info(f"Previous period: {prev_start} to {prev_end}")
+            # Use most recent week as current, second-most-recent as previous
+            metrics_data = trend_data[-1]["metrics"]
+            period_start, period_end = week_periods[-1]
+            logger.info(f"Report period: {period_start} to {period_end}, trend weeks: {len(trend_data)}")
 
-            # Fetch previous period metrics for week-over-week comparison
-            prev_metrics_data = self.google_ads.get_performance_metrics(
-                customer_id=account.customer_id,
-                date_from=prev_start,
-                date_to=prev_end,
-                campaign_ids=selected_campaign_ids
-            )
-
-            # Calculate week-over-week changes
-            if prev_metrics_data and prev_metrics_data.get("status") != "error":
-                self._add_change_indicators(metrics_data, prev_metrics_data)
+            # Calculate week-over-week changes (current vs previous week)
+            if len(trend_data) >= 2:
+                self._add_change_indicators(metrics_data, trend_data[-2]["metrics"])
             else:
                 logger.warning("Could not fetch previous period metrics for comparison")
 
-            # Generate AI insight using Gemini
+            # Generate AI insight using Gemini (with 4-week trend)
             insight_text = self.gemini.generate_report_insight(
-                metrics=metrics_data
+                metrics=metrics_data,
+                trend_data=trend_data
             )
 
             # Build Slack message with Block Kit
@@ -94,7 +90,8 @@ class ReportService:
             message_blocks = self.slack.build_weekly_report_message(
                 metrics=metrics_data,
                 insight=insight_text,
-                period=period
+                period=period,
+                trend_data=trend_data
             )
 
             # Send message to Slack
@@ -173,13 +170,21 @@ class ReportService:
             self.db.rollback()
             return {"status": "error", "message": str(e)}
 
-    def get_weekly_period(self) -> Tuple[date, date]:
-        """Get last week's date range (Monday to Sunday)."""
+    def get_n_week_periods(self, n: int = 4):
+        """Get last n complete weeks' date ranges, oldest first."""
         today = date.today()
         days_since_monday = today.weekday()
         last_sunday = today - timedelta(days=days_since_monday + 1)
-        last_monday = last_sunday - timedelta(days=6)
-        return last_monday, last_sunday
+        periods = []
+        for i in range(n - 1, -1, -1):
+            week_end = last_sunday - timedelta(weeks=i)
+            week_start = week_end - timedelta(days=6)
+            periods.append((week_start, week_end))
+        return periods
+
+    def get_weekly_period(self) -> Tuple[date, date]:
+        """Get last week's date range (Monday to Sunday)."""
+        return self.get_n_week_periods(1)[0]
 
     def _add_change_indicators(self, current_metrics: Dict, previous_metrics: Dict) -> None:
         """Add week-over-week change indicators to metrics."""
@@ -202,9 +207,11 @@ class ReportService:
         # Calculate changes for key metrics
         metrics_to_track = [
             ("cost", "cost"),
+            ("impressions", "impressions"),
+            ("clicks", "clicks"),
             ("conversions", "conversions"),
-            ("roas", "roas"),
-            ("clicks", "clicks")
+            ("cpc", "cpc"),
+            ("cpa", "cpa"),
         ]
 
         for metric_key, display_key in metrics_to_track:

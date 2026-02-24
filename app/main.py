@@ -125,12 +125,12 @@ async def root():
 
 
 # Register API routers
-from .api.endpoints import slack, oauth
-from .api.endpoints.health import router as health_router
-from .api.endpoints.reports import router as reports_router
-from .api.endpoints.keywords import router as keywords_router
-from .api.endpoints.debug import router as debug_router
-from .core.metrics import metrics_router
+from .api.endpoints import slack, oauth  # noqa: E402
+from .api.endpoints.health import router as health_router  # noqa: E402
+from .api.endpoints.reports import router as reports_router  # noqa: E402
+from .api.endpoints.keywords import router as keywords_router  # noqa: E402
+from .api.endpoints.debug import router as debug_router  # noqa: E402
+from .core.metrics import metrics_router  # noqa: E402
 
 app.include_router(health_router, tags=["health"])
 app.include_router(slack.router, prefix="/slack", tags=["slack"])

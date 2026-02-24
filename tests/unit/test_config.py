@@ -1,7 +1,5 @@
 """Unit tests for configuration."""
 
-import pytest
-from app.config import Settings
 
 
 def test_settings_validation():

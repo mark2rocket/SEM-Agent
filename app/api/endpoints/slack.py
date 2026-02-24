@@ -16,7 +16,7 @@ from ...services.action_router import ActionRouter
 from ...services.slack_service import SlackService
 
 if TYPE_CHECKING:
-    from ...services.report_service import ReportService
+    pass
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -182,7 +182,7 @@ async def handle_message_event(event: dict, db: Session):
             thread_ts=thread_ts
         )
 
-        logger.info(f"Successfully processed message and sent response")
+        logger.info("Successfully processed message and sent response")
 
     except Exception as e:
         logger.error(f"Error handling message event: {str(e)}", exc_info=True)
@@ -194,7 +194,7 @@ async def handle_message_event(event: dict, db: Session):
                 text="죄송합니다. 메시지 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
                 thread_ts=thread_ts
             )
-        except:
+        except Exception:
             logger.error("Failed to send error message to user")
 
 
@@ -276,20 +276,20 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
 
         # Handle /sem-help command
         if command == "/sem-help":
-            google_auth_url = f"https://sem-agent.up.railway.app/oauth/google/authorize?tenant_id={tenant.id}"
             return {
                 "response_type": "ephemeral",
                 "text": "🤖 *SEM-Agent 도움말*\n\n"
                         "*사용 가능한 명령어:*\n"
                         "• `/sem-help` - 이 도움말 표시\n"
+                        "• `/sem-connect` - 계정 연동 (Google Ads, Search Console)\n"
                         "• `/sem-config` - 리포트 설정 변경\n"
                         "• `/sem-report` - 즉시 리포트 생성\n\n"
-                        "*시작하기:*\n"
-                        f"1. 📊 *Google Ads 연동*: <{google_auth_url}|여기를 클릭하여 계정 연동>\n"
-                        "2. `/sem-config`로 리포트 주기 설정\n"
-                        "3. `/sem-report`로 즉시 리포트 확인\n\n"
-                        "💡 리포트를 생성하려면 먼저 Google Ads 계정을 연동해야 합니다."
+                        "💡 처음 사용하신다면 `/sem-connect`로 계정을 먼저 연동하세요."
             }
+
+        # Handle /sem-connect command
+        elif command == "/sem-connect":
+            return handle_connect_command(tenant)
 
         # Handle /sem-config command
         elif command == "/sem-config":
@@ -314,6 +314,44 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
             "response_type": "ephemeral",
             "text": f"명령어 처리 중 오류가 발생했습니다: {str(e)}"
         }
+
+
+def handle_connect_command(tenant):
+    """Handle /sem-connect command - show account connection menu."""
+    google_auth_url = f"https://sem-agent.up.railway.app/oauth/google/authorize?tenant_id={tenant.id}"
+    return {
+        "response_type": "ephemeral",
+        "blocks": [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": "🔗 계정 연동하기", "emoji": True}
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "연동할 서비스를 선택하세요:"
+                }
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "📊 Google Ads 연동", "emoji": True},
+                        "style": "primary",
+                        "url": google_auth_url,
+                        "action_id": "connect_google_ads"
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "🔍 Search Console 연동", "emoji": True},
+                        "action_id": "connect_search_console"
+                    }
+                ]
+            }
+        ]
+    }
 
 
 async def handle_config_command(db: Session, channel_id: str, text: str):
@@ -682,10 +720,10 @@ async def _generate_report_async(
         ).first()
         if slack_oauth and slack_oauth.access_token:
             slack_bot_token = decrypt_token(slack_oauth.access_token)
-            logger.info(f"[Report] Using decrypted Slack token from OAuthToken table")
+            logger.info("[Report] Using decrypted Slack token from OAuthToken table")
         else:
             slack_bot_token = settings.slack_bot_token
-            logger.warning(f"[Report] No Slack OAuthToken found, using settings token")
+            logger.warning("[Report] No Slack OAuthToken found, using settings token")
         slack_service = SlackService(bot_token=slack_bot_token)
 
         report_service = ReportService(
@@ -928,6 +966,17 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
                 "replace_original": False,
                 "response_type": "ephemeral"
             }
+
+    elif action_id == "connect_search_console":
+        return {
+            "response_type": "ephemeral",
+            "replace_original": False,
+            "text": "🔍 *Google Search Console 연동*\n\n준비 중입니다. 곧 지원될 예정입니다! 🚀"
+        }
+
+    elif action_id == "connect_google_ads":
+        # URL 버튼 클릭 시 interaction 수신 - 별도 처리 불필요
+        return {"ok": True}
 
     elif action_id == "ignore_keyword":
         # Get approval_request_id from action value

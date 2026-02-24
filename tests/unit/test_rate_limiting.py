@@ -1,7 +1,7 @@
 """Unit tests for rate limiting middleware."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from fastapi import Request, Response, status
 from redis.asyncio import Redis
 

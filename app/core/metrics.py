@@ -228,7 +228,7 @@ def update_active_tenants_gauge(db: Session) -> None:
     Args:
         db: Database session
     """
-    count = db.query(Tenant).filter(Tenant.is_active == True).count()
+    count = db.query(Tenant).filter(Tenant.is_active).count()
     active_tenants.set(count)
 
 
@@ -262,7 +262,7 @@ def update_all_gauges(db: Session) -> None:
 # FastAPI Endpoint
 # =============================================================================
 
-from fastapi import APIRouter
+from fastapi import APIRouter  # noqa: E402
 
 metrics_router = APIRouter()
 

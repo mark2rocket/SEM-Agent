@@ -2,7 +2,7 @@
 
 import pytest
 from datetime import datetime, timedelta
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from fastapi import status
 
 from app.models.report import ReportHistory
@@ -380,7 +380,7 @@ def test_get_keyword_not_found(client):
 def test_approve_keyword_success(client, db, sample_approval, mock_services):
     """Test POST /api/v1/approvals/{id}/approve approves keyword."""
     from datetime import datetime
-    from app.models.keyword import ApprovalAction, KeywordStatus
+    from app.models.keyword import KeywordStatus
 
     def mock_approve_keyword(approval_request_id: int, slack_user_id: str) -> bool:
         """Mock that actually updates the database."""

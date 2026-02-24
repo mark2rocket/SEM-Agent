@@ -1,7 +1,6 @@
 """Unit tests for security module."""
 
-import pytest
-from datetime import datetime, timedelta
+from datetime import timedelta
 import time
 
 from app.core.security import (

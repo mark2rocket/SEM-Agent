@@ -6,7 +6,6 @@ from typing import List
 
 from ...schemas.keyword import (
     KeywordCandidateResponse,
-    ApprovalRequest as ApprovalRequestSchema,
     ApprovalResponse
 )
 from ...models.keyword import KeywordCandidate, ApprovalRequest, KeywordStatus

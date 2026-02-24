@@ -1,6 +1,5 @@
 """Unit tests for service modules."""
 
-import pytest
 from unittest.mock import Mock
 from datetime import date, timedelta
 
@@ -87,7 +86,7 @@ class TestKeywordService:
         """Test approve_keyword returns a boolean."""
         from app.models.tenant import Tenant
         from app.models.keyword import KeywordCandidate, ApprovalRequest, KeywordStatus
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         # Create tenant and keyword in database
         tenant = Tenant(workspace_id="T123", workspace_name="Test")
