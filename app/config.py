@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # Gemini AI
     gemini_api_key: str = Field(...)
     gemini_default_model: str = Field(
-        default="gemini-2.0-flash",
+        default="gemini-1.5-flash-latest",
         validation_alias=AliasChoices("gemini_default_model", "gemini_model")
     )
     gemini_pro_model: str = Field(default="gemini-1.5-pro")

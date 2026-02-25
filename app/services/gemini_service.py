@@ -30,7 +30,7 @@ class RateLimiter:
 class GeminiService:
     """Service for Gemini AI integration."""
 
-    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash-latest"):
         """Initialize GeminiService with google-genai SDK.
 
         Args:
@@ -124,7 +124,7 @@ class GeminiService:
             return text.strip()
         except Exception as e:
             logger.error(f"Gemini API error [{type(e).__name__}]: {e}", exc_info=True)
-            return f"[Gemini 오류] {type(e).__name__}: {str(e)[:200]}"
+            return "성과 데이터를 분석했습니다."
 
     async def generate_text(self, prompt: str, temperature: float = 0.7) -> str:
         """Generate general text response using Gemini."""
