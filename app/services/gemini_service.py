@@ -124,7 +124,7 @@ class GeminiService:
             return text.strip()
         except Exception as e:
             logger.error(f"Gemini API error [{type(e).__name__}]: {e}", exc_info=True)
-            return "성과 데이터를 분석했습니다."
+            return f"[Gemini 오류] {type(e).__name__}: {str(e)[:200]}"
 
     async def generate_text(self, prompt: str, temperature: float = 0.7) -> str:
         """Generate general text response using Gemini."""
