@@ -734,7 +734,9 @@ async def _generate_report_async(
         )
 
         logger.info(f"[Report] Step 2: Generating weekly report for tenant {tenant_id}, channel={notify_channel}")
-        result = report_service.generate_weekly_report(
+        import asyncio
+        result = await asyncio.to_thread(
+            report_service.generate_weekly_report,
             tenant_id,
             notify_channel=notify_channel,
             response_url=response_url

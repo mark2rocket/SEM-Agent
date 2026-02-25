@@ -38,12 +38,12 @@ class SlackService:
             raise
 
     def _build_trend_chart_url(self, trend_data: list) -> str:
-        """Build QuickChart.io short URL for 4-week trend chart (CPA, CPC, 전환수).
+        """Build QuickChart.io direct image URL for 4-week trend chart (CPA, CPC, 전환수).
 
-        Uses QuickChart create API to generate a short URL that Slack can render.
+        Uses GET URL with encoded config for direct PNG rendering in Slack image blocks.
         """
         import json
-        import requests as http_requests
+        import urllib.parse
 
         labels = [d["period"] for d in trend_data]
         cpa_data = [round(d["metrics"].get("cpa", 0)) for d in trend_data]
@@ -60,22 +60,20 @@ class SlackService:
                         "label": "CPA",
                         "data": cpa_data,
                         "borderColor": "#E53E3E",
-                        "backgroundColor": "rgba(0,0,0,0)",
+                        "fill": False,
                         "yAxisID": "y",
                         "tension": 0.3,
-                        "pointRadius": 5,
-                        "borderWidth": 2
+                        "pointRadius": 4
                     },
                     {
                         "type": "line",
                         "label": "CPC",
                         "data": cpc_data,
                         "borderColor": "#3182CE",
-                        "backgroundColor": "rgba(0,0,0,0)",
+                        "fill": False,
                         "yAxisID": "y",
                         "tension": 0.3,
-                        "pointRadius": 5,
-                        "borderWidth": 2
+                        "pointRadius": 4
                     },
                     {
                         "type": "bar",
@@ -88,24 +86,12 @@ class SlackService:
             },
             "options": {
                 "plugins": {
-                    "title": {
-                        "display": True,
-                        "text": "4-Week Trend: CPA / CPC / Conversions",
-                        "font": {"size": 14}
-                    },
                     "legend": {"position": "bottom"}
                 },
                 "scales": {
-                    "y": {
-                        "type": "linear",
-                        "position": "left",
-                        "title": {"display": True, "text": "Cost (KRW)"},
-                        "grid": {"color": "rgba(0,0,0,0.05)"}
-                    },
+                    "y": {"position": "left"},
                     "y1": {
-                        "type": "linear",
                         "position": "right",
-                        "title": {"display": True, "text": "Conversions"},
                         "grid": {"drawOnChartArea": False},
                         "ticks": {"stepSize": 1}
                     }
@@ -113,26 +99,15 @@ class SlackService:
             }
         }
 
-        # QuickChart create API → 단축 URL 반환 (Slack image block 렌더링 호환)
+        # 직접 GET URL 방식 → Slack image block에서 PNG를 바로 렌더링
         try:
-            resp = http_requests.post(
-                "https://quickchart.io/chart/create",
-                json={"chart": json.dumps(chart_config), "width": 600, "height": 280, "backgroundColor": "white"},
-                timeout=10
-            )
-            logger.info(f"QuickChart create API status: {resp.status_code}")
-            if resp.status_code == 200:
-                result = resp.json()
-                logger.info(f"QuickChart create API result: {result}")
-                if result.get("success"):
-                    chart_url = result["url"]
-                    logger.info(f"QuickChart URL: {chart_url}")
-                    return chart_url
-                logger.warning(f"QuickChart create API returned no success: {result}")
-            else:
-                logger.warning(f"QuickChart create API HTTP {resp.status_code}: {resp.text[:200]}")
+            chart_str = json.dumps(chart_config, separators=(',', ':'))
+            encoded = urllib.parse.quote(chart_str)
+            chart_url = f"https://quickchart.io/chart?c={encoded}&w=500&h=260&bkg=white"
+            logger.info(f"QuickChart GET URL length: {len(chart_url)}, url: {chart_url[:100]}...")
+            return chart_url
         except Exception as e:
-            logger.error(f"QuickChart create API error: {e}", exc_info=True)
+            logger.error(f"QuickChart URL build error: {e}", exc_info=True)
 
         return ""
 
