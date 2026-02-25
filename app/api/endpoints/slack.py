@@ -746,7 +746,7 @@ async def _generate_report_async(
                 report_service.generate_weekly_report,
                 tenant_id,
                 notify_channel=notify_channel,
-                response_url=response_url if i == 0 else None,
+                response_url=response_url,
                 override_campaign_ids=override
             )
             if result.get("status") == "error":
