@@ -37,68 +37,20 @@ class SlackService:
             logger.error(f"Slack API error: {e}")
             raise
 
-    def _build_trend_chart_url(self, trend_data: list) -> str:
-        """Build QuickChart.io direct image URL for 4-week trend chart (CPA, CPC, 전환수).
-
-        Uses GET URL with encoded config for direct PNG rendering in Slack image blocks.
-        """
-        import json
-        import urllib.parse
-
-        labels = [d["period"] for d in trend_data]
-        cpa_data = [round(d["metrics"].get("cpa", 0)) for d in trend_data]
-        cpc_data = [round(d["metrics"].get("cpc", 0)) for d in trend_data]
-        conversions_data = [int(d["metrics"].get("conversions", 0)) for d in trend_data]
-
-        chart_config = {
-            "type": "bar",
-            "data": {
-                "labels": labels,
-                "datasets": [
-                    {
-                        "type": "line",
-                        "label": "CPA(원)",
-                        "data": cpa_data,
-                        "borderColor": "#E53E3E",
-                        "fill": False,
-                        "tension": 0.3,
-                        "pointRadius": 4
-                    },
-                    {
-                        "type": "line",
-                        "label": "CPC(원)",
-                        "data": cpc_data,
-                        "borderColor": "#3182CE",
-                        "fill": False,
-                        "tension": 0.3,
-                        "pointRadius": 4
-                    },
-                    {
-                        "type": "bar",
-                        "label": "전환수",
-                        "data": conversions_data,
-                        "backgroundColor": "rgba(56,161,105,0.6)"
-                    }
-                ]
-            },
-            "options": {
-                "plugins": {
-                    "legend": {"position": "bottom"}
-                }
-            }
-        }
-
-        # 직접 GET URL 방식 → Slack image block에서 PNG를 바로 렌더링
-        try:
-            chart_str = json.dumps(chart_config, separators=(',', ':'))
-            encoded = urllib.parse.quote(chart_str)
-            chart_url = f"https://quickchart.io/chart?c={encoded}&w=500&h=260&bkg=white"
-            logger.info(f"QuickChart GET URL length: {len(chart_url)}, url: {chart_url[:100]}...")
-            return chart_url
-        except Exception as e:
-            logger.error(f"QuickChart URL build error: {e}", exc_info=True)
-
-        return ""
+    def _build_sparkline(self, values: list) -> str:
+        """숫자 리스트를 유니코드 스파크라인 문자열로 변환."""
+        if not values or len(values) < 2:
+            return ""
+        blocks = "▁▂▃▄▅▆▇█"
+        min_v = min(values)
+        max_v = max(values)
+        if max_v == min_v:
+            return "▄" * len(values)
+        result = ""
+        for v in values:
+            idx = round((v - min_v) / (max_v - min_v) * 7)
+            result += blocks[max(0, min(7, idx))]
+        return result
 
     def build_weekly_report_message(
         self,
@@ -114,12 +66,21 @@ class SlackService:
         cpa_val = metrics.get("cpa", 0)
         cpa_display = f"₩{cpa_val:,.0f}" if cpa_val > 0 else "N/A"
 
-        cost_text = f"*비용:*\n₩{metrics['cost']:,.0f}{fmt_change('cost_change')}"
-        impressions_text = f"*노출:*\n{metrics.get('impressions', 0):,}{fmt_change('impressions_change')}"
-        clicks_text = f"*클릭:*\n{metrics.get('clicks', 0):,}{fmt_change('clicks_change')}"
-        conversions_text = f"*전환:*\n{metrics.get('conversions', 0):.0f}{fmt_change('conversions_change')}"
-        cpc_text = f"*CPC:*\n₩{metrics.get('cpc', 0):,.0f}{fmt_change('cpc_change')}"
-        cpa_text = f"*CPA:*\n{cpa_display}{fmt_change('cpa_change')}"
+        # 4주 스파크라인 생성
+        spark = {}
+        if trend_data and len(trend_data) >= 2:
+            for key in ("cost", "impressions", "clicks", "conversions", "cpc", "cpa"):
+                vals = [d["metrics"].get(key, 0) for d in trend_data]
+                spark[key] = f" `{self._build_sparkline(vals)}`"
+        else:
+            spark = {k: "" for k in ("cost", "impressions", "clicks", "conversions", "cpc", "cpa")}
+
+        cost_text = f"*비용:*\n₩{metrics['cost']:,.0f}{fmt_change('cost_change')}{spark['cost']}"
+        impressions_text = f"*노출:*\n{metrics.get('impressions', 0):,}{fmt_change('impressions_change')}{spark['impressions']}"
+        clicks_text = f"*클릭:*\n{metrics.get('clicks', 0):,}{fmt_change('clicks_change')}{spark['clicks']}"
+        conversions_text = f"*전환:*\n{metrics.get('conversions', 0):.0f}{fmt_change('conversions_change')}{spark['conversions']}"
+        cpc_text = f"*CPC:*\n₩{metrics.get('cpc', 0):,.0f}{fmt_change('cpc_change')}{spark['cpc']}"
+        cpa_text = f"*CPA:*\n{cpa_display}{fmt_change('cpa_change')}{spark['cpa']}"
 
         blocks = [
             {
@@ -148,22 +109,6 @@ class SlackService:
                 ]
             }
         ]
-
-        # 4주 트렌드 차트 (데이터가 2주 이상일 때만)
-        if trend_data and len(trend_data) >= 2:
-            chart_url = self._build_trend_chart_url(trend_data)
-            if chart_url:
-                blocks += [
-                    {
-                        "type": "section",
-                        "text": {"type": "mrkdwn", "text": "*📈 4주 트렌드*"}
-                    },
-                    {
-                        "type": "image",
-                        "image_url": chart_url,
-                        "alt_text": "4주 트렌드 차트 (CPA, CPC, 전환수)"
-                    }
-                ]
 
         blocks += [
             {"type": "divider"},
