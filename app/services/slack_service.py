@@ -57,7 +57,8 @@ class SlackService:
         metrics: Dict,
         insight: str,
         period: str,
-        trend_data: list = None
+        trend_data: list = None,
+        campaign_name: str = None
     ) -> Dict:
         """Build Block Kit message for weekly report."""
         def fmt_change(key: str) -> str:
@@ -82,10 +83,11 @@ class SlackService:
         cpc_text = f"*CPC:*\n₩{metrics.get('cpc', 0):,.0f}{fmt_change('cpc_change')}{spark['cpc']}"
         cpa_text = f"*CPA:*\n{cpa_display}{fmt_change('cpa_change')}{spark['cpa']}"
 
+        header_text = f"📊 [{campaign_name}] 주간 리포트 ({period})" if campaign_name else f"📊 주간 광고 리포트 ({period})"
         blocks = [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": f"📊 주간 광고 리포트 ({period})"}
+                "text": {"type": "plain_text", "text": header_text}
             },
             {
                 "type": "section",

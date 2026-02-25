@@ -17,9 +17,13 @@ class ReportService:
         self.gemini = gemini_service
         self.slack = slack_service
 
-    def generate_weekly_report(self, tenant_id: int, notify_channel: str = None, response_url: str = None) -> Dict:
-        """Generate weekly performance report."""
-        logger.info(f"Generating weekly report for tenant {tenant_id}")
+    def generate_weekly_report(self, tenant_id: int, notify_channel: str = None, response_url: str = None, override_campaign_ids: list = None) -> Dict:
+        """Generate weekly performance report.
+
+        Args:
+            override_campaign_ids: 단일 캠페인 ID 리스트. 지정하면 schedule 설정 무시.
+        """
+        logger.info(f"Generating weekly report for tenant {tenant_id}, override_campaigns={override_campaign_ids}")
 
         try:
             # Import models
@@ -41,12 +45,28 @@ class ReportService:
                 logger.error(f"No active Google Ads account for tenant {tenant_id}")
                 return {"status": "error", "message": "No active Google Ads account"}
 
-            # Get report schedule to check for campaign filters
-            schedule = self.db.query(ReportSchedule).filter_by(tenant_id=tenant_id).first()
-            selected_campaign_ids = None
-            if schedule and schedule.campaign_ids:
-                selected_campaign_ids = schedule.campaign_ids.split(',')
-                logger.info(f"Filtering report by {len(selected_campaign_ids)} selected campaigns")
+            # 캠페인 필터 결정: override > schedule > 전체
+            if override_campaign_ids is not None:
+                selected_campaign_ids = override_campaign_ids if override_campaign_ids else None
+                logger.info(f"Using override campaign filter: {selected_campaign_ids}")
+            else:
+                schedule = self.db.query(ReportSchedule).filter_by(tenant_id=tenant_id).first()
+                selected_campaign_ids = None
+                if schedule and schedule.campaign_ids:
+                    selected_campaign_ids = schedule.campaign_ids.split(',')
+                    logger.info(f"Filtering report by {len(selected_campaign_ids)} selected campaigns")
+
+            # 단일 캠페인인 경우 이름 조회
+            campaign_name = None
+            if selected_campaign_ids and len(selected_campaign_ids) == 1:
+                try:
+                    campaigns = self.google_ads.list_campaigns(account.customer_id)
+                    for c in campaigns:
+                        if c['id'] == selected_campaign_ids[0]:
+                            campaign_name = c['name']
+                            break
+                except Exception as e:
+                    logger.warning(f"Could not fetch campaign name: {e}")
 
             # Fetch 4 weeks of metrics for trend analysis (oldest first)
             week_periods = self.get_n_week_periods(4)
@@ -91,7 +111,8 @@ class ReportService:
                 metrics=metrics_data,
                 insight=insight_text,
                 period=period,
-                trend_data=trend_data
+                trend_data=trend_data,
+                campaign_name=campaign_name
             )
 
             # Send message to Slack

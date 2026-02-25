@@ -733,43 +733,42 @@ async def _generate_report_async(
             slack_service=slack_service
         )
 
-        logger.info(f"[Report] Step 2: Generating weekly report for tenant {tenant_id}, channel={notify_channel}")
+        logger.info(f"[Report] Step 2: Generating reports for tenant {tenant_id}, campaigns={selected_campaign_ids}, channel={notify_channel}")
         import asyncio
-        result = await asyncio.to_thread(
-            report_service.generate_weekly_report,
-            tenant_id,
-            notify_channel=notify_channel,
-            response_url=response_url
-        )
 
-        if result.get("status") == "error":
-            error_msg = result.get("message", "알 수 없는 오류")
-            logger.error(f"[Report] Failed: {error_msg}")
-            _slack_notify(slack_service, notify_channel, f"❌ 리포트 생성 실패: {error_msg}")
-            # response_url로도 실패 메시지 전달 (채널 알림 실패해도 사용자가 볼 수 있게)
-            if response_url:
-                import requests as http_requests
-                try:
-                    http_requests.post(
-                        response_url,
-                        json={"text": f"❌ 리포트 생성 실패: {error_msg}", "replace_original": True},
-                        timeout=5
-                    )
-                except Exception as ru_err:
-                    logger.warning(f"[Report] Failed to update response_url with error: {ru_err}")
-        else:
-            logger.info(f"[Report] Success: {result}")
-            # 성공 시 에페머럴 "생성 중" 메시지 제거 (리포트는 이미 채널에 공개 게시됨)
-            if response_url:
-                import requests as http_requests
-                try:
-                    http_requests.post(
-                        response_url,
-                        json={"delete_original": True},
-                        timeout=5
-                    )
-                except Exception as ru_err:
-                    logger.warning(f"[Report] Failed to delete ephemeral message: {ru_err}")
+        # 캠페인별 개별 리포트 생성 (선택된 캠페인이 없으면 전체 1개)
+        campaigns_to_process = selected_campaign_ids if selected_campaign_ids else [None]
+        any_success = False
+
+        for i, campaign_id in enumerate(campaigns_to_process):
+            override = [campaign_id] if campaign_id else None
+            result = await asyncio.to_thread(
+                report_service.generate_weekly_report,
+                tenant_id,
+                notify_channel=notify_channel,
+                response_url=response_url if i == 0 else None,
+                override_campaign_ids=override
+            )
+            if result.get("status") == "error":
+                error_msg = result.get("message", "알 수 없는 오류")
+                logger.error(f"[Report] Campaign {campaign_id} failed: {error_msg}")
+                _slack_notify(slack_service, notify_channel, f"❌ 리포트 생성 실패 (캠페인 {campaign_id}): {error_msg}")
+            else:
+                any_success = True
+                logger.info(f"[Report] Campaign {campaign_id} success: {result}")
+
+        if any_success and response_url:
+            import requests as http_requests
+            try:
+                http_requests.post(response_url, json={"delete_original": True}, timeout=5)
+            except Exception as ru_err:
+                logger.warning(f"[Report] Failed to delete ephemeral message: {ru_err}")
+        elif not any_success and response_url:
+            import requests as http_requests
+            try:
+                http_requests.post(response_url, json={"text": "❌ 리포트 생성에 실패했습니다.", "replace_original": True}, timeout=5)
+            except Exception as ru_err:
+                logger.warning(f"[Report] Failed to update response_url: {ru_err}")
 
     except HTTPException as e:
         logger.error(f"[Report] HTTP error: {e.detail}", exc_info=True)
