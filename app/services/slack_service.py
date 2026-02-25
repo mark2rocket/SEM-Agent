@@ -57,44 +57,33 @@ class SlackService:
                 "datasets": [
                     {
                         "type": "line",
-                        "label": "CPA",
+                        "label": "CPA(원)",
                         "data": cpa_data,
                         "borderColor": "#E53E3E",
                         "fill": False,
-                        "yAxisID": "y",
                         "tension": 0.3,
                         "pointRadius": 4
                     },
                     {
                         "type": "line",
-                        "label": "CPC",
+                        "label": "CPC(원)",
                         "data": cpc_data,
                         "borderColor": "#3182CE",
                         "fill": False,
-                        "yAxisID": "y",
                         "tension": 0.3,
                         "pointRadius": 4
                     },
                     {
                         "type": "bar",
-                        "label": "Conv",
+                        "label": "전환수",
                         "data": conversions_data,
-                        "backgroundColor": "rgba(56,161,105,0.6)",
-                        "yAxisID": "y1"
+                        "backgroundColor": "rgba(56,161,105,0.6)"
                     }
                 ]
             },
             "options": {
                 "plugins": {
                     "legend": {"position": "bottom"}
-                },
-                "scales": {
-                    "y": {"position": "left"},
-                    "y1": {
-                        "position": "right",
-                        "grid": {"drawOnChartArea": False},
-                        "ticks": {"stepSize": 1}
-                    }
                 }
             }
         }
