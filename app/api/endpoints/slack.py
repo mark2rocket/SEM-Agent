@@ -289,7 +289,7 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
 
         # Handle /sem-connect command
         elif command == "/sem-connect":
-            return handle_connect_command(tenant)
+            return await handle_connect_command(tenant, db)
 
         # Handle /sem-config command
         elif command == "/sem-config":
@@ -316,49 +316,86 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
         }
 
 
-def handle_connect_command(tenant):
-    """Handle /sem-connect command - show account connection menu."""
+async def handle_connect_command(tenant, db: Session):
+    """Handle /sem-connect command - show account connection menu with status."""
+    from ...models.google_ads import SearchConsoleAccount
+
     google_auth_url = f"https://sem-agent.up.railway.app/oauth/google/authorize?tenant_id={tenant.id}"
     gsc_auth_url = f"https://sem-agent.up.railway.app/oauth/gsc/authorize?tenant_id={tenant.id}"
+
+    # Check Google Ads connection status
+    ads_token = db.query(OAuthToken).filter(
+        OAuthToken.tenant_id == tenant.id,
+        OAuthToken.provider == OAuthProvider.GOOGLE
+    ).first()
+    ads_connected = bool(ads_token and ads_token.refresh_token)
+
+    # Check GSC connection status
+    gsc_account = db.query(SearchConsoleAccount).filter_by(
+        tenant_id=tenant.id, is_active=True
+    ).first()
+    gsc_connected = bool(gsc_account and gsc_account.refresh_token)
+
+    # Build status text
+    ads_status = f"✅ 연동됨" if ads_connected else "❌ 미연동"
+    gsc_status = f"✅ 연동됨 ({gsc_account.site_url})" if gsc_connected else "❌ 미연동"
+
+    ads_btn_text = "📊 Google Ads 재연동" if ads_connected else "📊 Google Ads 연동"
+    gsc_btn_text = "🔍 Search Console 재연동" if gsc_connected else "🔍 Search Console 연동"
+
     return {
         "response_type": "ephemeral",
         "blocks": [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": "🔗 계정 연동하기", "emoji": True}
+                "text": {"type": "plain_text", "text": "🔗 계정 연동 관리", "emoji": True}
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": "연동할 서비스를 선택하세요:"
+                    "text": (
+                        "*각 서비스는 서로 다른 Google 계정으로 연동할 수 있습니다.*\n\n"
+                        f"• *Google Ads*: {ads_status}\n"
+                        f"• *Search Console*: {gsc_status}"
+                    )
+                }
+            },
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*📊 Google Ads*\n광고 성과 데이터 (비용, 클릭, 전환, CPA)"
+                },
+                "accessory": {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": ads_btn_text, "emoji": True},
+                    "style": "primary",
+                    "url": google_auth_url,
+                    "action_id": "connect_google_ads"
                 }
             },
             {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "📊 Google Ads 연동", "emoji": True},
-                        "style": "primary",
-                        "url": google_auth_url,
-                        "action_id": "connect_google_ads"
-                    },
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "🔍 Search Console 연동", "emoji": True},
-                        "style": "primary",
-                        "url": gsc_auth_url,
-                        "action_id": "connect_search_console"
-                    }
-                ]
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": "*🔍 Google Search Console*\nSEO 성과 데이터 (클릭수, 노출수, CTR, 평균 순위)"
+                },
+                "accessory": {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": gsc_btn_text, "emoji": True},
+                    "style": "primary",
+                    "url": gsc_auth_url,
+                    "action_id": "connect_search_console"
+                }
             },
             {
                 "type": "context",
                 "elements": [
                     {
                         "type": "mrkdwn",
-                        "text": "💡 Search Console 연동 시 Google Ads 리포트와 함께 SEO 성과도 자동으로 받아볼 수 있습니다."
+                        "text": "💡 Search Console 연동 시 `/sem-report` 실행 때 SEO 리포트가 자동으로 함께 발송됩니다."
                     }
                 ]
             }
