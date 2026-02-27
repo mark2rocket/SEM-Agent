@@ -91,9 +91,10 @@ async def startup_event():
             logger.info("Database migrations completed successfully")
         except Exception as e:
             logger.error(f"Failed to run migrations: {e}")
-            logger.info("Falling back to create_all...")
-            Base.metadata.create_all(bind=engine)
 
+        # Always run create_all with checkfirst=True to create any new tables
+        # not covered by Alembic migrations (e.g., newly added models)
+        Base.metadata.create_all(bind=engine, checkfirst=True)
         logger.info("Database tables ready")
 
         logger.info("✅ SEM-Agent API started successfully")
