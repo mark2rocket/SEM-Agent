@@ -557,7 +557,8 @@ async def gsc_oauth_authorize(tenant_id: int, db: Session = Depends(get_db)):
             state=state,
             prompt="consent"
         )
-        logger.info(f"Redirecting tenant {tenant_id} to GSC OAuth")
+        logger.info(f"GSC OAuth redirect_uri: {settings.google_gsc_redirect_uri}")
+        logger.info(f"GSC OAuth authorization_url: {authorization_url}")
         return RedirectResponse(url=authorization_url)
     except Exception as e:
         logger.error(f"Error initiating GSC OAuth: {e}", exc_info=True)
