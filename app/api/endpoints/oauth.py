@@ -16,7 +16,7 @@ from ...core.redis_client import redis_client
 from ...core.security import encrypt_token, decrypt_token
 from ...models.oauth import OAuthToken, OAuthProvider
 from ...models.tenant import Tenant, User
-from ...models.google_ads import GoogleAdsAccount
+from ...models.google_ads import GoogleAdsAccount, SearchConsoleAccount
 from ...services.slack_service import SlackService
 from ...services.google_ads_service import GoogleAdsService
 
@@ -25,6 +25,9 @@ router = APIRouter()
 
 # Google OAuth scopes for Google Ads
 GOOGLE_ADS_SCOPES = ["https://www.googleapis.com/auth/adwords"]
+
+# Google Search Console scopes
+GSC_SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 
 # Slack OAuth scopes
 SLACK_SCOPES = ["chat:write", "commands", "im:history"]
@@ -521,6 +524,198 @@ async def google_oauth_callback(
             status_code=500,
             detail=f"Failed to complete OAuth flow: {str(e)}"
         )
+
+
+def _create_gsc_flow() -> Flow:
+    """Create Google OAuth flow for Search Console."""
+    client_config = {
+        "web": {
+            "client_id": settings.google_client_id,
+            "client_secret": settings.google_client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [settings.google_gsc_redirect_uri],
+        }
+    }
+    flow = Flow.from_client_config(client_config=client_config, scopes=GSC_SCOPES)
+    flow.redirect_uri = settings.google_gsc_redirect_uri
+    return flow
+
+
+@router.get("/gsc/authorize")
+async def gsc_oauth_authorize(tenant_id: int, db: Session = Depends(get_db)):
+    """Initiate Google Search Console OAuth flow."""
+    logger.info(f"Starting GSC OAuth for tenant {tenant_id}")
+    try:
+        state_token = secrets.token_urlsafe(32)
+        state = f"{tenant_id}:{state_token}"
+        await redis_client.setex(f"gsc_oauth_state:{state}", 600, str(tenant_id))
+
+        flow = _create_gsc_flow()
+        authorization_url, _ = flow.authorization_url(
+            access_type="offline",
+            state=state,
+            prompt="consent"
+        )
+        logger.info(f"Redirecting tenant {tenant_id} to GSC OAuth")
+        return RedirectResponse(url=authorization_url)
+    except Exception as e:
+        logger.error(f"Error initiating GSC OAuth: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to initiate GSC OAuth flow")
+
+
+@router.get("/gsc/callback")
+async def gsc_oauth_callback(
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Handle Google Search Console OAuth callback."""
+    logger.info("Handling GSC OAuth callback")
+
+    if error:
+        logger.warning(f"User denied GSC OAuth: {error}")
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Authorization denied"})
+
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing authorization code or state")
+
+    try:
+        stored_tenant_id = await redis_client.get(f"gsc_oauth_state:{state}")
+        if not stored_tenant_id:
+            raise HTTPException(status_code=400, detail="Invalid or expired state token")
+
+        tenant_id = int(stored_tenant_id)
+        await redis_client.delete(f"gsc_oauth_state:{state}")
+
+        flow = _create_gsc_flow()
+        flow.fetch_token(code=code)
+        credentials = flow.credentials
+
+        if not credentials.refresh_token:
+            raise HTTPException(
+                status_code=500,
+                detail="리프레시 토큰을 받지 못했습니다. 다시 시도해주세요."
+            )
+
+        # Fetch available sites
+        from googleapiclient.discovery import build as gapi_build
+        from google.oauth2.credentials import Credentials as GCredentials
+        from google.auth.transport.requests import Request as GRequest
+
+        creds = GCredentials(
+            token=credentials.token,
+            refresh_token=credentials.refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
+            scopes=GSC_SCOPES
+        )
+        gsc_service = gapi_build("searchconsole", "v1", credentials=creds)
+        sites_result = gsc_service.sites().list().execute()
+        sites = sites_result.get("siteEntry", [])
+
+        if not sites:
+            raise HTTPException(
+                status_code=400,
+                detail="연동된 Search Console 사이트가 없습니다. Google Search Console에서 사이트를 먼저 등록하세요."
+            )
+
+        # Use first verified site
+        site_url = sites[0]["siteUrl"]
+        all_sites = [s["siteUrl"] for s in sites]
+
+        # Store in SearchConsoleAccount
+        encrypted_rt = encrypt_token(credentials.refresh_token)
+        existing = db.query(SearchConsoleAccount).filter_by(
+            tenant_id=tenant_id, site_url=site_url
+        ).first()
+        if existing:
+            existing.refresh_token = encrypted_rt
+            existing.is_active = True
+            logger.info(f"Updated SearchConsoleAccount for tenant {tenant_id}: {site_url}")
+        else:
+            sc_account = SearchConsoleAccount(
+                tenant_id=tenant_id,
+                site_url=site_url,
+                refresh_token=encrypted_rt,
+                is_active=True
+            )
+            db.add(sc_account)
+            logger.info(f"Created SearchConsoleAccount for tenant {tenant_id}: {site_url}")
+        db.commit()
+
+        sites_list_html = "".join(f"<li>{s}</li>" for s in all_sites)
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="ko">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Search Console 연동 완료</title>
+            <style>
+                * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+                    background: linear-gradient(135deg, #34a853 0%, #0f9d58 100%);
+                    min-height: 100vh; display: flex; align-items: center;
+                    justify-content: center; padding: 20px;
+                }}
+                .container {{
+                    background: white; border-radius: 16px;
+                    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                    padding: 48px; max-width: 500px; width: 100%; text-align: center;
+                }}
+                .icon {{ font-size: 64px; margin-bottom: 24px; }}
+                h1 {{ color: #1a202c; font-size: 28px; font-weight: 700; margin-bottom: 16px; }}
+                p {{ color: #4a5568; font-size: 16px; line-height: 1.6; margin-bottom: 24px; }}
+                .site-box {{
+                    background: #f0fdf4; border: 1px solid #86efac;
+                    border-radius: 8px; padding: 16px; margin-bottom: 24px; text-align: left;
+                }}
+                .site-box h3 {{ color: #166534; font-size: 14px; font-weight: 600; margin-bottom: 8px; }}
+                .site-box ul {{ margin-left: 16px; color: #15803d; font-size: 14px; line-height: 1.8; }}
+                .active-site {{
+                    background: #dcfce7; border-radius: 6px; padding: 10px 14px;
+                    margin-bottom: 16px; font-size: 14px; font-weight: 600; color: #166534;
+                }}
+                .button {{
+                    display: inline-block;
+                    background: linear-gradient(135deg, #34a853 0%, #0f9d58 100%);
+                    color: white; padding: 14px 32px; border-radius: 8px;
+                    text-decoration: none; font-weight: 600; font-size: 16px;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="icon">✅</div>
+                <h1>Search Console 연동 성공!</h1>
+                <p>SEM-Agent가 Google Search Console 데이터에 접근할 수 있습니다.</p>
+                <div class="active-site">📊 연동된 사이트: {site_url}</div>
+                <div class="site-box">
+                    <h3>📋 전체 Search Console 사이트 ({len(all_sites)}개)</h3>
+                    <ul>{sites_list_html}</ul>
+                </div>
+                <p style="font-size:14px; color:#6b7280;">
+                    이제 <code>/sem-report</code> 명령어로 Google Ads와 함께<br>
+                    Search Console 리포트도 받아보세요!
+                </p>
+                <br>
+                <a href="slack://open" class="button">Slack으로 돌아가기</a>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content, status_code=200)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error handling GSC OAuth callback: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to complete GSC OAuth flow: {str(e)}")
 
 
 @router.get("/slack/install")

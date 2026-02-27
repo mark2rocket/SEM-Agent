@@ -26,6 +26,7 @@ class Tenant(Base):
     users = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
     oauth_tokens = relationship("OAuthToken", back_populates="tenant", cascade="all, delete-orphan")
     google_ads_accounts = relationship("GoogleAdsAccount", back_populates="tenant", cascade="all, delete-orphan")
+    search_console_accounts = relationship("SearchConsoleAccount", back_populates="tenant", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Tenant(id={self.id}, workspace={self.workspace_name})>"

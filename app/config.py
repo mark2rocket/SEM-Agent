@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     google_client_id: str = Field(...)
     google_client_secret: str = Field(...)
     google_redirect_uri: str = Field(...)
+    google_gsc_redirect_uri: str = Field(default="http://localhost:8000/oauth/gsc/callback")
 
     # Google Ads
     google_developer_token: str = Field(...)

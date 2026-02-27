@@ -319,6 +319,7 @@ async def slack_commands(request: Request, db: Session = Depends(get_db)):
 def handle_connect_command(tenant):
     """Handle /sem-connect command - show account connection menu."""
     google_auth_url = f"https://sem-agent.up.railway.app/oauth/google/authorize?tenant_id={tenant.id}"
+    gsc_auth_url = f"https://sem-agent.up.railway.app/oauth/gsc/authorize?tenant_id={tenant.id}"
     return {
         "response_type": "ephemeral",
         "blocks": [
@@ -346,7 +347,18 @@ def handle_connect_command(tenant):
                     {
                         "type": "button",
                         "text": {"type": "plain_text", "text": "🔍 Search Console 연동", "emoji": True},
+                        "style": "primary",
+                        "url": gsc_auth_url,
                         "action_id": "connect_search_console"
+                    }
+                ]
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": "💡 Search Console 연동 시 Google Ads 리포트와 함께 SEO 성과도 자동으로 받아볼 수 있습니다."
                     }
                 ]
             }
@@ -757,6 +769,21 @@ async def _generate_report_async(
                 any_success = True
                 logger.info(f"[Report] Campaign {campaign_id} success: {result}")
 
+        # GSC 리포트 생성 (Search Console 연동된 경우 자동으로 추가)
+        logger.info(f"[Report] Step 3: Generating GSC report for tenant {tenant_id}")
+        gsc_result = await asyncio.to_thread(
+            report_service.generate_gsc_report,
+            tenant_id,
+            notify_channel=notify_channel,
+            response_url=response_url
+        )
+        if gsc_result.get("status") == "skipped":
+            logger.info("[Report] GSC report skipped (no Search Console account connected)")
+        elif gsc_result.get("status") == "error":
+            logger.warning(f"[Report] GSC report failed: {gsc_result.get('message')}")
+        else:
+            logger.info("[Report] GSC report generated successfully")
+
         if any_success and response_url:
             import requests as http_requests
             try:
@@ -969,11 +996,8 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
             }
 
     elif action_id == "connect_search_console":
-        return {
-            "response_type": "ephemeral",
-            "replace_original": False,
-            "text": "🔍 *Google Search Console 연동*\n\n준비 중입니다. 곧 지원될 예정입니다! 🚀"
-        }
+        # URL 버튼 클릭 → Slack이 직접 브라우저를 열어줌, 별도 처리 불필요
+        return {"ok": True}
 
     elif action_id == "connect_google_ads":
         # URL 버튼 클릭 시 interaction 수신 - 별도 처리 불필요

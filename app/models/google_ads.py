@@ -44,3 +44,21 @@ class PerformanceThreshold(Base):
 
     def __repr__(self) -> str:
         return f"<PerformanceThreshold(tenant_id={self.tenant_id})>"
+
+
+class SearchConsoleAccount(Base):
+    """Google Search Console site linked to tenant."""
+
+    __tablename__ = "search_console_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True)
+    site_url: Mapped[str] = mapped_column(String(500))
+    refresh_token: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # Encrypted
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    tenant = relationship("Tenant", back_populates="search_console_accounts")
+
+    def __repr__(self) -> str:
+        return f"<SearchConsoleAccount(id={self.id}, site_url={self.site_url})>"

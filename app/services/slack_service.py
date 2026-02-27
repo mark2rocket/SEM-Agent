@@ -125,6 +125,77 @@ class SlackService:
         ]
         return {"blocks": blocks}
 
+    def build_gsc_report_message(
+        self,
+        metrics: Dict,
+        top_queries: list,
+        insight: str,
+        period: str,
+        site_url: str,
+        trend_data: list = None
+    ) -> Dict:
+        """Build Block Kit message for Google Search Console weekly report."""
+        spark = {}
+        if trend_data and len(trend_data) >= 2:
+            for key in ("clicks", "impressions", "ctr", "position"):
+                vals = [d["metrics"].get(key, 0) for d in trend_data]
+                spark[key] = f" `{self._build_sparkline(vals)}`"
+        else:
+            spark = {k: "" for k in ("clicks", "impressions", "ctr", "position")}
+
+        clicks_text = f"*클릭수:*\n{metrics.get('clicks', 0):,}회{spark['clicks']}"
+        impressions_text = f"*노출수:*\n{metrics.get('impressions', 0):,}회{spark['impressions']}"
+        ctr_text = f"*CTR:*\n{metrics.get('ctr', 0):.1f}%{spark['ctr']}"
+        position_text = f"*평균 순위:*\n{metrics.get('position', 0):.1f}위{spark['position']}"
+
+        # Top queries
+        query_lines = []
+        for i, q in enumerate(top_queries[:5], 1):
+            query_lines.append(
+                f"{i}. `{q['query']}` — {q['clicks']}클릭 · {q['ctr']:.1f}% · {q['position']:.1f}위"
+            )
+        queries_text = "\n".join(query_lines) if query_lines else "데이터 없음"
+
+        # Extract domain for header
+        domain = site_url.rstrip("/").replace("sc-domain:", "").replace("https://", "").replace("http://", "")
+        header_text = f"🔍 [{domain}] 검색 성과 리포트 ({period})"
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": header_text}
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": clicks_text},
+                    {"type": "mrkdwn", "text": impressions_text}
+                ]
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": ctr_text},
+                    {"type": "mrkdwn", "text": position_text}
+                ]
+            },
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"🔎 *인기 검색어 Top 5*\n{queries_text}"}
+            },
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"💡 *AI 인사이트*\n{insight}"}
+            },
+            {
+                "type": "context",
+                "elements": [{"type": "mrkdwn", "text": "Powered by Google Search Console + Gemini AI"}]
+            }
+        ]
+        return {"blocks": blocks}
+
     def build_keyword_alert_message(self, keyword_data: Dict, approval_request_id: int = None) -> Dict:
         """Build Block Kit message for keyword alert."""
         blocks = [

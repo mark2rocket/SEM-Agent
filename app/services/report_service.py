@@ -191,6 +191,127 @@ class ReportService:
             self.db.rollback()
             return {"status": "error", "message": str(e)}
 
+    def generate_gsc_report(
+        self, tenant_id: int, notify_channel: str = None, response_url: str = None
+    ) -> dict:
+        """Generate Google Search Console weekly report."""
+        logger.info(f"Generating GSC report for tenant {tenant_id}")
+        try:
+            from ..models.google_ads import SearchConsoleAccount
+            from ..models.tenant import Tenant
+            from ..core.security import decrypt_token
+            from ..config import settings
+            from ..services.search_console_service import SearchConsoleService
+
+            tenant = self.db.query(Tenant).filter_by(id=tenant_id).first()
+            if not tenant:
+                return {"status": "error", "message": "Tenant not found"}
+
+            gsc_account = self.db.query(SearchConsoleAccount).filter_by(
+                tenant_id=tenant_id, is_active=True
+            ).first()
+            if not gsc_account or not gsc_account.refresh_token:
+                return {"status": "skipped", "message": "No Search Console account connected"}
+
+            refresh_token = decrypt_token(gsc_account.refresh_token)
+            gsc_service = SearchConsoleService(
+                client_id=settings.google_client_id,
+                client_secret=settings.google_client_secret,
+                refresh_token=refresh_token
+            )
+
+            # Fetch 4 weeks of trend data
+            week_periods = self.get_n_week_periods(4)
+            trend_data = []
+            for w_start, w_end in week_periods:
+                try:
+                    w_metrics = gsc_service.get_search_analytics(gsc_account.site_url, w_start, w_end)
+                    trend_data.append({
+                        "period": f"{w_start.strftime('%m/%d')}~{w_end.strftime('%m/%d')}",
+                        "metrics": w_metrics
+                    })
+                except Exception as e:
+                    logger.warning(f"GSC week fetch failed for {w_start}: {e}")
+
+            if not trend_data:
+                return {"status": "error", "message": "Failed to fetch Search Console data"}
+
+            metrics_data = trend_data[-1]["metrics"]
+            period_start, period_end = week_periods[-1]
+
+            try:
+                top_queries = gsc_service.get_top_queries(gsc_account.site_url, period_start, period_end)
+            except Exception as e:
+                logger.warning(f"Failed to fetch top queries: {e}")
+                top_queries = []
+
+            insight_text = self.gemini.generate_gsc_insight(
+                metrics=metrics_data,
+                top_queries=top_queries,
+                trend_data=trend_data
+            )
+
+            period = f"{period_start.strftime('%Y-%m-%d')} ~ {period_end.strftime('%Y-%m-%d')}"
+            message_blocks = self.slack.build_gsc_report_message(
+                metrics=metrics_data,
+                top_queries=top_queries,
+                insight=insight_text,
+                period=period,
+                site_url=gsc_account.site_url,
+                trend_data=trend_data
+            )
+
+            blocks_list = message_blocks.get("blocks", message_blocks)
+            target_channel = notify_channel or tenant.slack_channel_id
+            report_text = f"Search Console Report ({period_start} ~ {period_end})"
+            slack_ts = None
+
+            if target_channel:
+                try:
+                    slack_response = self.slack.client.chat_postMessage(
+                        channel=target_channel,
+                        blocks=blocks_list,
+                        text=report_text
+                    )
+                    slack_ts = slack_response.get("ts")
+                    logger.info(f"GSC report posted via chat_postMessage to {target_channel}")
+                except Exception as post_error:
+                    logger.warning(f"GSC chat_postMessage failed: {post_error}")
+
+            if slack_ts is None and response_url:
+                import requests as http_requests
+                try:
+                    r = http_requests.post(
+                        response_url,
+                        json={
+                            "response_type": "in_channel",
+                            "replace_original": False,
+                            "blocks": blocks_list,
+                            "text": report_text
+                        },
+                        timeout=10
+                    )
+                    if r.status_code == 200:
+                        slack_ts = "response_url"
+                        logger.info("GSC report posted via response_url fallback")
+                    else:
+                        logger.error(f"GSC response_url fallback failed: {r.status_code} {r.text}")
+                except Exception as e:
+                    logger.error(f"GSC response_url fallback exception: {e}")
+
+            if slack_ts is None:
+                return {"status": "error", "message": "GSC 리포트를 채널에 게시할 수 없습니다."}
+
+            return {
+                "status": "success",
+                "period": f"{period_start} ~ {period_end}",
+                "metrics": metrics_data
+            }
+
+        except Exception as e:
+            logger.error(f"Error generating GSC report: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
     def get_n_week_periods(self, n: int = 4):
         """Get last n complete weeks' date ranges, oldest first."""
         today = date.today()

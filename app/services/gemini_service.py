@@ -126,6 +126,76 @@ class GeminiService:
             logger.error(f"Gemini API error [{type(e).__name__}]: {e}", exc_info=True)
             return "성과 데이터를 분석했습니다."
 
+    def generate_gsc_insight(
+        self,
+        metrics: Dict,
+        top_queries: list,
+        trend_data: Optional[list] = None
+    ) -> str:
+        """Generate Korean SEO insights for Search Console report."""
+        query_rows = []
+        for q in top_queries[:5]:
+            query_rows.append(
+                f"| {q['query']} | {q['clicks']}클릭 | {q['impressions']}노출 | {q['ctr']:.1f}% | {q['position']:.1f}위 |"
+            )
+        queries_text = "\n".join(query_rows) if query_rows else "| (데이터 없음) | - | - | - | - |"
+
+        trend_section = ""
+        if trend_data and len(trend_data) >= 2:
+            rows = []
+            for d in trend_data:
+                m = d["metrics"]
+                rows.append(
+                    f"| {d['period']} | {m.get('clicks', 0):,} | {m.get('ctr', 0):.1f}% | {m.get('position', 0):.1f}위 |"
+                )
+            trend_section = (
+                "\n[4주 트렌드]\n"
+                "| 기간 | 클릭수 | CTR | 평균순위 |\n"
+                "|------|--------|-----|----------|\n"
+                + "\n".join(rows) + "\n"
+            )
+
+        prompt = f"""당신은 10년 경력의 SEO 전문가입니다.
+아래 Google Search Console 주간 성과를 분석하여 담당자가 바로 실무에 활용할 수 있는 한국어 코멘트를 작성하세요.
+
+[이번 주 성과]
+- 클릭수: {metrics.get('clicks', 0):,}회
+- 노출수: {metrics.get('impressions', 0):,}회
+- CTR: {metrics.get('ctr', 0):.1f}%
+- 평균 순위: {metrics.get('position', 0):.1f}위
+
+[인기 검색어 Top 5]
+| 검색어 | 클릭 | 노출 | CTR | 순위 |
+|--------|------|------|-----|------|
+{queries_text}
+{trend_section}
+[지표 해석 기준]
+- CTR 상승 = 검색 결과에서 클릭 유도력 개선 (긍정)
+- 평균 순위 하락(숫자 감소) = SEO 순위 개선 (긍정)
+- 노출 증가 + 클릭 감소 = 메타 설명·제목 최적화 필요
+- 평균 순위 10 이하 = 1페이지 노출 중 (중요)
+
+[작성 규칙]
+- 정확히 3문장으로 작성
+- 첫 문장: 이번 주 전체 SEO 성과를 수치와 함께 한 줄로 평가 (긍정/부정 방향 명확히)
+- 둘째 문장: 가장 주목할 지표 또는 인기 검색어 변화와 그 의미를 수치 포함하여 설명
+- 셋째 문장: 4주 트렌드 흐름을 바탕으로 다음 주 집중해야 할 구체적인 SEO 액션 1가지 제안
+- "분석했습니다" 같은 무의미한 마무리 금지
+"""
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt
+            )
+            text = response.text
+            if not text or not text.strip():
+                logger.warning("Gemini returned empty GSC response")
+                return "SEO 데이터를 분석했습니다."
+            return text.strip()
+        except Exception as e:
+            logger.error(f"Gemini GSC insight error [{type(e).__name__}]: {e}", exc_info=True)
+            return "SEO 데이터를 분석했습니다."
+
     async def generate_text(self, prompt: str, temperature: float = 0.7) -> str:
         """Generate general text response using Gemini."""
         if not self.rate_limiter.can_proceed():
