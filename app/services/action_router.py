@@ -14,7 +14,7 @@ from app.services.keyword_service import KeywordService
 from app.services.google_ads_service import GoogleAdsService
 from app.services.gemini_service import GeminiService
 from app.models.report import ReportSchedule, ReportFrequency
-from app.models.google_ads import GoogleAdsAccount
+from app.models.google_ads import GoogleAdsAccount, SearchConsoleAccount
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,9 @@ class ActionRouter:
 
             elif intent == "keyword_suggestion":
                 return await self._handle_keyword_suggestion(entities, tenant_id)
+
+            elif intent == "query_gsc_data":
+                return await self._handle_query_gsc_data(entities, tenant_id)
 
             elif intent == "general_chat":
                 return await self._handle_general_chat(entities, tenant_id, conversation_history)
@@ -265,6 +268,79 @@ Focus on keywords that are relevant for search advertising campaigns."""
         except Exception as e:
             logger.error(f"Error suggesting keywords: {e}", exc_info=True)
             return f"Sorry, I couldn't generate keyword suggestions: {str(e)}"
+
+    async def _handle_query_gsc_data(self, entities: Dict[str, Any], tenant_id: int) -> str:
+        """Handle Google Search Console data query."""
+        try:
+            from app.services.search_console_service import SearchConsoleService
+            from app.core.security import decrypt_token
+            from app.config import settings
+
+            gsc_account = self.db.query(SearchConsoleAccount).filter_by(
+                tenant_id=tenant_id, is_active=True
+            ).first()
+            if not gsc_account or not gsc_account.refresh_token:
+                return "❌ Search Console이 연동되어 있지 않습니다. `/sem-connect` 에서 연동해주세요."
+
+            refresh_token = decrypt_token(gsc_account.refresh_token)
+            gsc_service = SearchConsoleService(
+                client_id=settings.google_client_id,
+                client_secret=settings.google_client_secret,
+                refresh_token=refresh_token
+            )
+
+            start_date, end_date = self._parse_date_range(entities)
+            data_type = entities.get("gsc_data_type", "overview")
+            limit = int(entities.get("limit", 5))
+            target_url = entities.get("target_url")
+
+            from datetime import date as date_type
+            start = start_date.date() if hasattr(start_date, "date") else start_date
+            end = end_date.date() if hasattr(end_date, "date") else end_date
+
+            period_str = f"{start} ~ {end}"
+            data_summary = f"사이트: {gsc_account.site_url}\n기간: {period_str}\n"
+
+            if data_type == "queries":
+                rows = gsc_service.get_top_queries(gsc_account.site_url, start, end, limit)
+                if not rows:
+                    return f"📊 해당 기간({period_str}) 검색어 데이터가 없습니다."
+                lines = [f"🔎 *인기 검색어 Top {len(rows)}* ({period_str})"]
+                for i, r in enumerate(rows, 1):
+                    lines.append(f"{i}. `{r['query']}` — {r['clicks']}클릭 · {r['impressions']}노출 · CTR {r['ctr']:.1f}% · {r['position']:.1f}위")
+                return "\n".join(lines)
+
+            elif data_type == "pages":
+                rows = gsc_service.get_top_pages(gsc_account.site_url, start, end, limit)
+                if not rows:
+                    return f"📄 해당 기간({period_str}) 페이지 데이터가 없습니다."
+                lines = [f"📄 *인기 콘텐츠 Top {len(rows)}* ({period_str})"]
+                for i, r in enumerate(rows, 1):
+                    path = r.get("path", r.get("url", "-"))
+                    lines.append(f"{i}. `{path}` — {r['clicks']}클릭 · {r['impressions']}노출 · CTR {r['ctr']:.1f}% · {r['position']:.1f}위")
+                return "\n".join(lines)
+
+            else:  # overview
+                metrics = gsc_service.get_search_analytics(gsc_account.site_url, start, end)
+                data_summary += (
+                    f"클릭: {metrics.get('clicks', 0):,}회\n"
+                    f"노출: {metrics.get('impressions', 0):,}회\n"
+                    f"CTR: {metrics.get('ctr', 0):.1f}%\n"
+                    f"평균 순위: {metrics.get('position', 0):.1f}위"
+                )
+
+                prompt = f"""다음 Google Search Console 데이터를 보고 자연스럽게 한국어로 요약해줘:
+
+{data_summary}
+
+사용자 질문 맥락: {entities.get('original_message', '')}
+
+2~3문장으로 핵심만 간결하게 답변해줘."""
+                return await self.gemini_service.generate_text(prompt)
+
+        except Exception as e:
+            logger.error(f"Error querying GSC data: {e}", exc_info=True)
+            return f"Search Console 데이터 조회 중 오류가 발생했습니다: {str(e)}"
 
     async def _handle_general_chat(
         self,

@@ -13,6 +13,7 @@ GENERATE_REPORT = "generate_report"
 CHANGE_SCHEDULE = "change_schedule"
 ANSWER_QUESTION = "answer_question"
 KEYWORD_SUGGESTION = "keyword_suggestion"
+QUERY_GSC_DATA = "query_gsc_data"
 GENERAL_CHAT = "general_chat"
 
 
@@ -68,9 +69,10 @@ class IntentService:
 SEM-Agent 기능:
 1. generate_report: 광고 성과 리포트 생성 (비용, 전환, ROAS 등)
 2. change_schedule: 리포트 발송 일정 변경
-3. answer_question: 광고 캠페인 관련 질문 답변
+3. answer_question: 구글 애즈 캠페인 관련 질문 답변 (비용, 클릭, 전환 등)
 4. keyword_suggestion: 키워드 추천 및 최적화
-5. general_chat: 일반 대화
+5. query_gsc_data: 구글 서치 콘솔 데이터 조회 (검색어, 페이지 성과, 노출, 클릭, CTR, 순위)
+6. general_chat: 일반 대화
 
 {context}
 
@@ -78,16 +80,24 @@ SEM-Agent 기능:
 
 다음 JSON 형식으로 응답하세요:
 {{
-  "intent": "의도 타입 (generate_report|change_schedule|answer_question|keyword_suggestion|general_chat)",
+  "intent": "의도 타입 (generate_report|change_schedule|answer_question|keyword_suggestion|query_gsc_data|general_chat)",
   "entities": {{
     "date_range": {{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}},
     "metrics": ["비용", "전환", "ROAS 등"],
     "campaign_names": ["캠페인 이름"],
     "schedule_time": "HH:MM",
-    "schedule_frequency": "daily|weekly|monthly"
+    "schedule_frequency": "daily|weekly|monthly",
+    "gsc_data_type": "queries|pages|overview",
+    "target_url": "특정 페이지 URL (선택)",
+    "limit": 5
   }},
   "confidence": 0.95
 }}
+
+query_gsc_data 사용 기준:
+- "검색어", "서치 콘솔", "오가닉", "자연 검색", "인기 검색어", "검색 순위" 언급 시
+- "페이지 성과", "콘텐츠 클릭", "어떤 글이 많이 읽혀", "인기 페이지" 언급 시
+- gsc_data_type: queries(검색어), pages(페이지/콘텐츠), overview(전체 지표)
 
 규칙:
 - intent는 반드시 5가지 중 하나여야 함
@@ -115,6 +125,7 @@ SEM-Agent 기능:
                 CHANGE_SCHEDULE,
                 ANSWER_QUESTION,
                 KEYWORD_SUGGESTION,
+                QUERY_GSC_DATA,
                 GENERAL_CHAT
             }
 
