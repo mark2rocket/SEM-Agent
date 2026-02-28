@@ -542,23 +542,6 @@ def _create_gsc_flow() -> Flow:
     return flow
 
 
-@router.get("/gsc/debug-url")
-async def gsc_debug_url(tenant_id: int = 1):
-    """Temporary debug: return GSC authorization URL as JSON."""
-    try:
-        flow = _create_gsc_flow()
-        authorization_url, _ = flow.authorization_url(
-            access_type="offline",
-            state=f"{tenant_id}:debug",
-            prompt="consent"
-        )
-        return JSONResponse({
-            "redirect_uri_used": settings.google_gsc_redirect_uri,
-            "authorization_url": authorization_url
-        })
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
 
 @router.get("/gsc/authorize")
 async def gsc_oauth_authorize(tenant_id: int, db: Session = Depends(get_db)):
@@ -575,8 +558,7 @@ async def gsc_oauth_authorize(tenant_id: int, db: Session = Depends(get_db)):
             state=state,
             prompt="consent"
         )
-        logger.info(f"GSC OAuth redirect_uri: {settings.google_gsc_redirect_uri}")
-        logger.info(f"GSC OAuth authorization_url: {authorization_url}")
+        logger.info(f"Redirecting tenant {tenant_id} to GSC OAuth")
         return RedirectResponse(url=authorization_url)
     except Exception as e:
         logger.error(f"Error initiating GSC OAuth: {e}", exc_info=True)
