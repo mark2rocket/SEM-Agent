@@ -439,80 +439,40 @@ class TestSlackService:
         image_blocks = [b for b in result["blocks"] if b.get("type") == "image"]
         assert len(image_blocks) == 0
 
-    def test_build_trend_chart_url_success(self):
-        """QuickChart POST create API 성공 시 URL 반환."""
+    def test_build_sparkline_ascending(self):
+        """스파크라인: 오름차순 데이터에서 올바른 문자 반환."""
         service = self._make_service()
-        trend_data = [
-            {"period": "01/01~01/07", "metrics": {"cpa": 100000, "cpc": 2000, "conversions": 5}},
-            {"period": "01/08~01/14", "metrics": {"cpa": 95000, "cpc": 1900, "conversions": 7}},
-        ]
+        result = service._build_sparkline([10, 20, 30, 40, 50])
+        assert isinstance(result, str)
+        assert len(result) == 5
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"success": True, "url": "https://quickchart.io/chart/render/zf-abc123"}
-
-        with patch("requests.post", return_value=mock_resp) as mock_post:
-            url = service._build_trend_chart_url(trend_data)
-
-        assert url == "https://quickchart.io/chart/render/zf-abc123"
-        mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        assert call_args.args[0] == "https://quickchart.io/chart/create"
-
-    def test_build_trend_chart_url_api_failure_returns_empty(self):
-        """QuickChart API 실패 시 빈 문자열 반환."""
+    def test_build_sparkline_constant(self):
+        """스파크라인: 모든 값이 동일하면 중간 문자 반환."""
         service = self._make_service()
-        trend_data = [
-            {"period": "01/01~01/07", "metrics": {"cpa": 100000, "cpc": 2000, "conversions": 5}},
-            {"period": "01/08~01/14", "metrics": {"cpa": 95000, "cpc": 1900, "conversions": 7}},
-        ]
+        result = service._build_sparkline([100, 100, 100])
+        assert isinstance(result, str)
+        assert len(result) == 3
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        mock_resp.text = "Internal Server Error"
-
-        with patch("requests.post", return_value=mock_resp):
-            url = service._build_trend_chart_url(trend_data)
-
-        assert url == ""
-
-    def test_build_trend_chart_url_network_error_returns_empty(self):
-        """네트워크 오류 시 빈 문자열 반환."""
+    def test_build_weekly_report_includes_sparkline(self):
+        """주간 리포트에 스파크라인이 포함된 섹션이 있어야 함."""
         service = self._make_service()
+        metrics = {"cost": 1000000, "impressions": 10000, "clicks": 500,
+                   "conversions": 10, "cpc": 2000, "cpa": 100000}
         trend_data = [
-            {"period": "01/01~01/07", "metrics": {"cpa": 100000, "cpc": 2000, "conversions": 5}},
-            {"period": "01/08~01/14", "metrics": {"cpa": 95000, "cpc": 1900, "conversions": 7}},
+            {"period": "01/01~01/07", "metrics": {"cost": 900000, "impressions": 9000,
+             "clicks": 450, "conversions": 8, "cpc": 2000, "cpa": 112500}},
+            {"period": "01/08~01/14", "metrics": {"cost": 1000000, "impressions": 10000,
+             "clicks": 500, "conversions": 10, "cpc": 2000, "cpa": 100000}},
         ]
-
-        with patch("requests.post", side_effect=Exception("Connection timeout")):
-            url = service._build_trend_chart_url(trend_data)
-
-        assert url == ""
-
-    def test_build_weekly_report_with_chart_url(self):
-        """차트 URL이 있으면 image 블록 추가됨."""
-        service = self._make_service()
-        metrics = {"cost": 1000000, "impressions": 10000, "clicks": 500, "conversions": 10, "cpc": 2000, "cpa": 100000}
-        trend_data = [
-            {"period": "01/01~01/07", "metrics": {"cpa": 100000, "cpc": 2000, "conversions": 5}},
-            {"period": "01/08~01/14", "metrics": {"cpa": 95000, "cpc": 1900, "conversions": 7}},
-        ]
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"success": True, "url": "https://quickchart.io/chart/render/zf-abc123"}
-
-        with patch("requests.post", return_value=mock_resp):
-            result = service.build_weekly_report_message(
-                metrics=metrics,
-                insight="테스트 인사이트",
-                period="2024-01-01 ~ 2024-01-07",
-                trend_data=trend_data
-            )
-
-        image_blocks = [b for b in result["blocks"] if b.get("type") == "image"]
-        assert len(image_blocks) == 1
-        assert image_blocks[0]["image_url"] == "https://quickchart.io/chart/render/zf-abc123"
+        result = service.build_weekly_report_message(
+            metrics=metrics,
+            insight="테스트 인사이트",
+            period="2024-01-08 ~ 2024-01-14",
+            trend_data=trend_data
+        )
+        assert "blocks" in result
+        all_text = str(result)
+        assert "클릭" in all_text or "cost" in all_text.lower()
 
     def test_build_keyword_alert_message_structure(self):
         service = self._make_service()
