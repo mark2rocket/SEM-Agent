@@ -245,6 +245,12 @@ class ReportService:
                 logger.warning(f"Failed to fetch top queries: {e}")
                 top_queries = []
 
+            try:
+                top_pages = gsc_service.get_top_pages(gsc_account.site_url, period_start, period_end)
+            except Exception as e:
+                logger.warning(f"Failed to fetch top pages: {e}")
+                top_pages = []
+
             insight_text = self.gemini.generate_gsc_insight(
                 metrics=metrics_data,
                 top_queries=top_queries,
@@ -255,6 +261,7 @@ class ReportService:
             message_blocks = self.slack.build_gsc_report_message(
                 metrics=metrics_data,
                 top_queries=top_queries,
+                top_pages=top_pages,
                 insight=insight_text,
                 period=period,
                 site_url=gsc_account.site_url,

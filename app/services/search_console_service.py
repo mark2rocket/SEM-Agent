@@ -73,6 +73,43 @@ class SearchConsoleService:
             logger.error(f"GSC get_search_analytics error: {e}", exc_info=True)
             raise
 
+    def get_top_pages(
+        self, site_url: str, date_from: date, date_to: date, limit: int = 5
+    ) -> List[Dict]:
+        """Get top pages by clicks for the period."""
+        try:
+            service = self._get_service()
+            request_body = {
+                "startDate": date_from.isoformat(),
+                "endDate": date_to.isoformat(),
+                "dimensions": ["page"],
+                "rowLimit": limit,
+                "orderBy": [{"fieldName": "clicks", "sortOrder": "DESCENDING"}]
+            }
+            result = service.searchanalytics().query(
+                siteUrl=site_url, body=request_body
+            ).execute()
+            rows = result.get("rows", [])
+            pages = []
+            for row in rows:
+                full_url = row["keys"][0]
+                # Extract path only for display
+                from urllib.parse import urlparse
+                parsed = urlparse(full_url)
+                path = parsed.path or "/"
+                pages.append({
+                    "url": full_url,
+                    "path": path,
+                    "clicks": int(row.get("clicks", 0)),
+                    "impressions": int(row.get("impressions", 0)),
+                    "ctr": round(row.get("ctr", 0.0) * 100, 2),
+                    "position": round(row.get("position", 0.0), 1)
+                })
+            return pages
+        except Exception as e:
+            logger.error(f"GSC get_top_pages error: {e}", exc_info=True)
+            raise
+
     def get_top_queries(
         self, site_url: str, date_from: date, date_to: date, limit: int = 5
     ) -> List[Dict]:

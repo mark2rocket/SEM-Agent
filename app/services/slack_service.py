@@ -132,7 +132,8 @@ class SlackService:
         insight: str,
         period: str,
         site_url: str,
-        trend_data: list = None
+        trend_data: list = None,
+        top_pages: list = None
     ) -> Dict:
         """Build Block Kit message for Google Search Console weekly report."""
         spark = {}
@@ -155,6 +156,15 @@ class SlackService:
                 f"{i}. `{q['query']}` — {q['clicks']}클릭 · {q['ctr']:.1f}% · {q['position']:.1f}위"
             )
         queries_text = "\n".join(query_lines) if query_lines else "데이터 없음"
+
+        # Top pages
+        page_lines = []
+        for i, p in enumerate((top_pages or [])[:5], 1):
+            path = p.get("path", p.get("url", "-"))
+            page_lines.append(
+                f"{i}. `{path}` — {p['clicks']}클릭 · {p['ctr']:.1f}% · {p['position']:.1f}위"
+            )
+        pages_text = "\n".join(page_lines) if page_lines else "데이터 없음"
 
         # Extract domain for header
         domain = site_url.rstrip("/").replace("sc-domain:", "").replace("https://", "").replace("http://", "")
@@ -183,6 +193,10 @@ class SlackService:
             {
                 "type": "section",
                 "text": {"type": "mrkdwn", "text": f"🔎 *인기 검색어 Top 5*\n{queries_text}"}
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"📄 *인기 콘텐츠 Top 5 (클릭)*\n{pages_text}"}
             },
             {"type": "divider"},
             {
