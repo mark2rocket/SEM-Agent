@@ -457,6 +457,67 @@ class GoogleAdsService:
             logger.error(f"Failed to list campaigns: {e}", exc_info=True)
             raise
 
+    def generate_keyword_ideas(
+        self,
+        customer_id: str,
+        seed_keywords: List[str],
+        language_id: str = "1012",   # 한국어
+        geo_target_id: str = "2410", # 대한민국
+        limit: int = 10
+    ) -> List[Dict]:
+        """Fetch keyword ideas from Google Ads Keyword Planner.
+
+        Args:
+            customer_id: Google Ads customer ID
+            seed_keywords: Seed keyword list
+            language_id: Google language constant ID (1012=Korean)
+            geo_target_id: Geo target constant ID (2410=South Korea)
+            limit: Max number of results to return
+
+        Returns:
+            List of keyword idea dicts with metrics
+        """
+        customer_id_clean = customer_id.replace("-", "")
+        endpoint = f"{self.BASE_URL}/customers/{customer_id_clean}:generateKeywordIdeas"
+        headers = self._build_headers()
+
+        payload = {
+            "keywordSeed": {"keywords": seed_keywords},
+            "language": f"languageConstants/{language_id}",
+            "geoTargetConstants": [f"geoTargetConstants/{geo_target_id}"],
+            "keywordPlanNetwork": "GOOGLE_SEARCH_AND_PARTNERS",
+            "includeAdultKeywords": False,
+            "pageSize": limit
+        }
+
+        logger.info(f"Generating keyword ideas for: {seed_keywords}")
+        try:
+            response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+            if response.status_code != 200:
+                logger.error(f"Keyword Planner API error ({response.status_code}): {response.text}")
+                return []
+
+            results = response.json().get("results", [])
+            ideas = []
+            for row in results:
+                m = row.get("keywordIdeaMetrics", {})
+                low_bid = int(m.get("lowTopOfPageBidMicros", 0)) // 1_000_000
+                high_bid = int(m.get("highTopOfPageBidMicros", 0)) // 1_000_000
+                ideas.append({
+                    "keyword": row.get("text", ""),
+                    "avg_monthly_searches": m.get("avgMonthlySearches", "N/A"),
+                    "competition": m.get("competition", "UNKNOWN"),
+                    "competition_index": m.get("competitionIndex", 0),
+                    "low_bid_krw": low_bid,
+                    "high_bid_krw": high_bid,
+                })
+            logger.info(f"Returned {len(ideas)} keyword ideas")
+            return ideas
+
+        except Exception as e:
+            logger.error(f"generate_keyword_ideas error: {e}", exc_info=True)
+            return []
+
     def add_negative_keyword(
         self,
         customer_id: str,

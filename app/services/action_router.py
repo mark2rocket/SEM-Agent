@@ -237,37 +237,58 @@ Format the response in a friendly, conversational way with key metrics highlight
             return f"Sorry, I couldn't fetch that data: {str(e)}"
 
     async def _handle_keyword_suggestion(self, entities: Dict[str, Any], tenant_id: int) -> str:
-        """Handle keyword suggestion request."""
+        """Handle keyword suggestion request using Google Ads Keyword Planner."""
         try:
             seed_keywords = entities.get('keywords', [])
-            max_suggestions = entities.get('max_suggestions', 10)
+            if not seed_keywords:
+                # 원본 메시지에서 키워드 추출 시도
+                original = entities.get('original_message', '')
+                seed_keywords = [w for w in original.split() if len(w) > 1 and w not in
+                                 ['키워드', '추천', '알려줘', '보여줘', '뭐야', '관련', '해줘']][:3]
 
-            logger.info(f"Suggesting keywords for tenant {tenant_id}: seeds={seed_keywords}")
+            if not seed_keywords:
+                return "키워드 추천을 위해 시드 키워드를 알려주세요.\n예: `@봇 \"러닝화\" 키워드 추천해줘`"
 
-            # Use Gemini to generate keyword suggestions
-            prompt = f"""You are a Google Ads keyword expert. Generate {max_suggestions} keyword suggestions based on these seed keywords: {', '.join(seed_keywords)}.
+            account = self.db.query(GoogleAdsAccount).filter_by(
+                tenant_id=tenant_id, is_active=True
+            ).first()
+            if not account:
+                return "❌ Google Ads 계정이 연동되어 있지 않습니다."
 
-For each keyword suggestion, provide:
-1. The keyword phrase
-2. Estimated search volume category (High/Medium/Low)
-3. Competition level (High/Medium/Low)
-4. Suggested bid range
+            logger.info(f"Keyword Planner request: seeds={seed_keywords}, tenant={tenant_id}")
 
-Format your response as a numbered list with clear sections for each metric.
-Focus on keywords that are relevant for search advertising campaigns."""
+            import asyncio
+            ideas = await asyncio.to_thread(
+                self.google_ads_service.generate_keyword_ideas,
+                account.customer_id,
+                seed_keywords,
+                limit=10
+            )
 
-            suggestions_text = await self.gemini_service.generate_text(prompt)
+            if not ideas:
+                # Keyword Planner 실패 시 Gemini 폴백
+                logger.warning("Keyword Planner returned no results, falling back to Gemini")
+                prompt = f"""한국 Google Ads 전문가로서 다음 시드 키워드 기반으로 10개 키워드를 추천해줘: {', '.join(seed_keywords)}
+각 키워드별로 예상 검색량(높음/중간/낮음), 경쟁도, 추천 입찰가를 포함해서 한국어로 답변해줘."""
+                return await self.gemini_service.generate_text(prompt)
 
-            # Format response
-            response = "*Keyword Suggestions:*\n\n"
-            response += suggestions_text
-            response += "\n\n_Would you like me to help you add any of these keywords to your campaign?_"
-
-            return response
+            comp_map = {"HIGH": "높음", "MEDIUM": "보통", "LOW": "낮음", "UNKNOWN": "-"}
+            lines = [f"🔑 *키워드 아이디어* (시드: {', '.join(seed_keywords)})"]
+            lines.append("")
+            for i, idea in enumerate(ideas, 1):
+                comp = comp_map.get(idea['competition'], idea['competition'])
+                searches = idea['avg_monthly_searches']
+                bid = f"₩{idea['low_bid_krw']:,}~{idea['high_bid_krw']:,}" if idea['high_bid_krw'] > 0 else "N/A"
+                lines.append(
+                    f"{i}. `{idea['keyword']}` — 월 검색 {searches} · 경쟁도 {comp} · 입찰가 {bid}"
+                )
+            lines.append("")
+            lines.append("_캠페인에 추가하고 싶은 키워드가 있으면 알려주세요!_")
+            return "\n".join(lines)
 
         except Exception as e:
             logger.error(f"Error suggesting keywords: {e}", exc_info=True)
-            return f"Sorry, I couldn't generate keyword suggestions: {str(e)}"
+            return f"키워드 추천 중 오류가 발생했습니다: {str(e)}"
 
     async def _handle_query_gsc_data(self, entities: Dict[str, Any], tenant_id: int) -> str:
         """Handle Google Search Console data query."""

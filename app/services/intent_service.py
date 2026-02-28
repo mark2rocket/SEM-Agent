@@ -87,6 +87,7 @@ SEM-Agent 기능:
     "campaign_names": ["캠페인 이름"],
     "schedule_time": "HH:MM",
     "schedule_frequency": "daily|weekly|monthly",
+    "keywords": ["시드 키워드 리스트"],
     "gsc_data_type": "queries|pages|overview",
     "target_url": "특정 페이지 URL (선택)",
     "limit": 5
