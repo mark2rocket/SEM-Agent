@@ -226,8 +226,21 @@ async def slack_events(request: Request, db: Session = Depends(get_db)):
         event["team"] = payload.get("team_id")
 
         # Handle message and app_mention events
+        # Slack requires response within 3 seconds → fire background task immediately
         if event_type in ["message", "app_mention"]:
-            await handle_message_event(event, db)
+            import asyncio
+
+            async def _handle_event_bg(event_data: dict):
+                from ...api.deps import get_db as _get_db
+                bg_db = next(_get_db())
+                try:
+                    await handle_message_event(event_data, bg_db)
+                finally:
+                    bg_db.close()
+
+            task = asyncio.create_task(_handle_event_bg(event))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
     return {"ok": True}
 
