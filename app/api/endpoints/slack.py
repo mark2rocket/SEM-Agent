@@ -676,19 +676,64 @@ async def handle_report_command(db: Session, channel_id: str):
                         "text": f"💡 총 {len(campaigns)}개의 캠페인이 있습니다. 선택하지 않으면 모든 캠페인이 포함됩니다."
                     }
                 ]
-            },
-            {
-                "type": "actions",
-                "elements": [
-                    {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "📊 리포트 생성"},
-                        "style": "primary",
-                        "action_id": "generate_report_button"
-                    }
-                ]
             }
         ]
+
+        # GSC 사이트 선택 드롭다운 추가 (연동된 경우)
+        try:
+            from ...models.google_ads import SearchConsoleAccount
+            from ...models.report import ReportSchedule as RS
+            gsc_accounts = db.query(SearchConsoleAccount).filter_by(
+                tenant_id=tenant.id, is_active=True
+            ).all()
+            if gsc_accounts:
+                gsc_schedule = db.query(RS).filter_by(tenant_id=tenant.id).first()
+                saved_gsc_url = gsc_schedule.gsc_site_url if gsc_schedule else None
+
+                site_options = [
+                    {
+                        "text": {"type": "plain_text", "text": acc.site_url},
+                        "value": acc.site_url
+                    }
+                    for acc in gsc_accounts
+                ]
+
+                # 저장된 선택값 또는 첫 번째 사이트를 initial로 설정
+                initial_url = saved_gsc_url if saved_gsc_url else gsc_accounts[0].site_url
+                initial_option = next(
+                    (opt for opt in site_options if opt["value"] == initial_url),
+                    site_options[0]
+                )
+
+                blocks.append({"type": "divider"})
+                blocks.append({
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*🔍 Search Console 도메인 선택:*"
+                    },
+                    "accessory": {
+                        "type": "static_select",
+                        "action_id": "select_gsc_site",
+                        "placeholder": {"type": "plain_text", "text": "도메인 선택"},
+                        "options": site_options,
+                        "initial_option": initial_option
+                    }
+                })
+        except Exception as e:
+            logger.warning(f"Failed to load GSC accounts for report UI: {e}")
+
+        blocks.append({
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "📊 리포트 생성"},
+                    "style": "primary",
+                    "action_id": "generate_report_button"
+                }
+            ]
+        })
 
         return {
             "response_type": "ephemeral",
@@ -707,7 +752,8 @@ async def _generate_report_async(
     tenant_id: int,
     channel_id: str,
     selected_campaign_ids: list[str] = None,
-    response_url: str = None
+    response_url: str = None,
+    gsc_site_url: str = None
 ):
     """Generate report asynchronously with proper error handling.
 
@@ -807,12 +853,13 @@ async def _generate_report_async(
                 logger.info(f"[Report] Campaign {campaign_id} success: {result}")
 
         # GSC 리포트 생성 (Search Console 연동된 경우 자동으로 추가)
-        logger.info(f"[Report] Step 3: Generating GSC report for tenant {tenant_id}")
+        logger.info(f"[Report] Step 3: Generating GSC report for tenant {tenant_id}, site={gsc_site_url}")
         gsc_result = await asyncio.to_thread(
             report_service.generate_gsc_report,
             tenant_id,
             notify_channel=notify_channel,
-            response_url=response_url
+            response_url=response_url,
+            site_url=gsc_site_url
         )
         if gsc_result.get("status") == "skipped":
             logger.info("[Report] GSC report skipped (no Search Console account connected)")
@@ -977,6 +1024,28 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
         # 선택 저장 완료 - 빈 200 응답으로 체크박스 UI 유지
         return {"ok": True}
 
+    elif action_id == "select_gsc_site":
+        # GSC 사이트 선택 시 DB에 저장
+        from ...models.report import ReportSchedule, ReportFrequency
+        from datetime import time
+
+        selected_site_url = action.get("selected_option", {}).get("value")
+
+        schedule = db.query(ReportSchedule).filter_by(tenant_id=tenant.id).first()
+        if not schedule:
+            schedule = ReportSchedule(
+                tenant_id=tenant.id,
+                frequency=ReportFrequency.WEEKLY,
+                day_of_week=0,
+                time_of_day=time(9, 0)
+            )
+            db.add(schedule)
+
+        schedule.gsc_site_url = selected_site_url
+        db.commit()
+
+        return {"ok": True}
+
     elif action_id == "generate_report_button":
         # "리포트 생성" 버튼 클릭 시 DB에 저장된 선택으로 리포트 생성
         from ...models.report import ReportSchedule
@@ -985,6 +1054,7 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
         selected_campaign_ids = (
             schedule.campaign_ids.split(',') if schedule and schedule.campaign_ids else []
         )
+        gsc_site_url = schedule.gsc_site_url if schedule else None
 
         # channel_id가 없으면 tenant의 저장된 채널 사용
         report_channel_id = channel_id or tenant.slack_channel_id or ""
@@ -996,7 +1066,8 @@ async def slack_interactions(request: Request, db: Session = Depends(get_db)):
                 tenant_id=tenant.id,
                 channel_id=report_channel_id,
                 selected_campaign_ids=selected_campaign_ids,
-                response_url=response_url
+                response_url=response_url,
+                gsc_site_url=gsc_site_url
             )
         )
         _background_tasks.add(task)

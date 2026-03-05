@@ -623,29 +623,30 @@ async def gsc_oauth_callback(
                 detail="연동된 Search Console 사이트가 없습니다. Google Search Console에서 사이트를 먼저 등록하세요."
             )
 
-        # Use first verified site
-        site_url = sites[0]["siteUrl"]
         all_sites = [s["siteUrl"] for s in sites]
 
-        # Store in SearchConsoleAccount
+        # Store all sites in SearchConsoleAccount
         encrypted_rt = encrypt_token(credentials.refresh_token)
-        existing = db.query(SearchConsoleAccount).filter_by(
-            tenant_id=tenant_id, site_url=site_url
-        ).first()
-        if existing:
-            existing.refresh_token = encrypted_rt
-            existing.is_active = True
-            logger.info(f"Updated SearchConsoleAccount for tenant {tenant_id}: {site_url}")
-        else:
-            sc_account = SearchConsoleAccount(
-                tenant_id=tenant_id,
-                site_url=site_url,
-                refresh_token=encrypted_rt,
-                is_active=True
-            )
-            db.add(sc_account)
-            logger.info(f"Created SearchConsoleAccount for tenant {tenant_id}: {site_url}")
+        for site_entry in sites:
+            site_url = site_entry["siteUrl"]
+            existing = db.query(SearchConsoleAccount).filter_by(
+                tenant_id=tenant_id, site_url=site_url
+            ).first()
+            if existing:
+                existing.refresh_token = encrypted_rt
+                existing.is_active = True
+                logger.info(f"Updated SearchConsoleAccount for tenant {tenant_id}: {site_url}")
+            else:
+                sc_account = SearchConsoleAccount(
+                    tenant_id=tenant_id,
+                    site_url=site_url,
+                    refresh_token=encrypted_rt,
+                    is_active=True
+                )
+                db.add(sc_account)
+                logger.info(f"Created SearchConsoleAccount for tenant {tenant_id}: {site_url}")
         db.commit()
+        site_url = all_sites[0]  # default for display
 
         sites_list_html = "".join(f"<li>{s}</li>" for s in all_sites)
         html_content = f"""

@@ -30,6 +30,7 @@ class ReportSchedule(Base):
     time_of_day: Mapped[time] = mapped_column(Time, default=time(9, 0))  # Default 09:00
     timezone: Mapped[str] = mapped_column(String(50), default="Asia/Seoul")
     campaign_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    gsc_site_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

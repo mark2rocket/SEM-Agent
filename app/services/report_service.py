@@ -192,10 +192,15 @@ class ReportService:
             return {"status": "error", "message": str(e)}
 
     def generate_gsc_report(
-        self, tenant_id: int, notify_channel: str = None, response_url: str = None
+        self, tenant_id: int, notify_channel: str = None, response_url: str = None,
+        site_url: str = None
     ) -> dict:
-        """Generate Google Search Console weekly report."""
-        logger.info(f"Generating GSC report for tenant {tenant_id}")
+        """Generate Google Search Console weekly report.
+
+        Args:
+            site_url: Optional site URL to use. If None, uses first active account.
+        """
+        logger.info(f"Generating GSC report for tenant {tenant_id}, site_url={site_url}")
         try:
             from ..models.google_ads import SearchConsoleAccount
             from ..models.tenant import Tenant
@@ -207,9 +212,14 @@ class ReportService:
             if not tenant:
                 return {"status": "error", "message": "Tenant not found"}
 
-            gsc_account = self.db.query(SearchConsoleAccount).filter_by(
-                tenant_id=tenant_id, is_active=True
-            ).first()
+            if site_url:
+                gsc_account = self.db.query(SearchConsoleAccount).filter_by(
+                    tenant_id=tenant_id, site_url=site_url, is_active=True
+                ).first()
+            else:
+                gsc_account = self.db.query(SearchConsoleAccount).filter_by(
+                    tenant_id=tenant_id, is_active=True
+                ).first()
             if not gsc_account or not gsc_account.refresh_token:
                 return {"status": "skipped", "message": "No Search Console account connected"}
 
